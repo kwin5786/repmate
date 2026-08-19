@@ -278,6 +278,71 @@ input::placeholder{ color: var(--text-dim); }
 }
 .add-btn:active{ transform: translateX(-50%) scale(.96); }
 
+/* ============================================================
+   HISTORY
+   ============================================================ */
+#cal-strip{
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0 12px;
+  margin-bottom: 6px;
+  background: var(--bg);
+  scrollbar-width: none;
+}
+#cal-strip::-webkit-scrollbar{ display: none; }
+.cal-day{
+  flex-shrink: 0;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 6px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.cal-day:disabled{ opacity: .35; }
+.cal-day.sel{ border-color: var(--accent); }
+.cal-wd{ font-size: 10px; color: var(--text-dim); font-weight: 600; }
+.cal-num{ font-size: 15px; font-weight: 700; }
+.cal-dot{
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.cal-dot.off{ background: transparent; }
+
+#history-list{ display: flex; flex-direction: column; gap: 14px; }
+.day-card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  scroll-margin-top: 86px;
+}
+.day-head{ font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+.hx-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 0;
+}
+.hx-row + .hx-row{ border-top: 1px solid var(--border); }
+.hx-row:active{ background: var(--surface-2); }
+
+/* progress chart sheet */
+.chart-sub{ color: var(--text-dim); font-size: 13px; margin: -6px 0 12px; }
+#chart-box svg{ width: 100%; height: auto; display: block; }
+.chart-note{ color: var(--text-dim); font-size: 13px; text-align: center; margin-top: 10px; }
+
 /* coming soon placeholders */
 .soon{
   min-height: 60dvh;
@@ -552,11 +617,8 @@ input::placeholder{ color: var(--text-dim); }
 
     <!-- HISTORY -->
     <div id="view-history" class="tab-view hidden">
-      <div class="soon">
-        <div class="icon">📈</div>
-        <h2>History</h2>
-        <p>Charts and past sessions are coming soon.</p>
-      </div>
+      <div id="cal-strip"></div>
+      <div id="history-list"></div>
     </div>
 
     <!-- GROUP -->
@@ -635,6 +697,13 @@ input::placeholder{ color: var(--text-dim); }
       <div id="set-rows"></div>
       <button class="addset-btn hidden" id="addset-btn">+ Add Set</button>
       <button class="primary-btn" id="save-btn">Save</button>
+    </div>
+
+    <!-- step 4: progress chart -->
+    <div id="sheet-chart" class="hidden">
+      <div class="sheet-title"><span id="chart-title"></span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="chart-sub" id="chart-sub"></div>
+      <div id="chart-box"></div>
     </div>
   </div>
 
@@ -991,7 +1060,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -1269,6 +1338,203 @@ async function saveEntry() {
 }
 
 /* ============================================================
+   HISTORY
+   ============================================================ */
+let historyLogs = [];  // all this member's rows, newest date first
+let historyDays = [];  // [{ date, logs }] grouped from historyLogs, desc
+let historySeq = 0;
+
+// prettyDate plus the year when it isn't the current one
+function prettyHistoryDate(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+
+async function loadHistory() {
+  const seq = ++historySeq;
+  const list = $('#history-list');
+  list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading history…</div>';
+  renderCalStrip();
+  const { data, error } = await sb.from('workout_logs')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group)')
+    .eq('member_id', session.member_id)
+    .order('log_date', { ascending: false })
+    .order('id', { ascending: true });
+  if (seq !== historySeq) return; // stale response
+  if (error) {
+    list.innerHTML = `<div class="state-msg">Couldn't load history.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="history-retry">Retry</button></div>`;
+    $('#history-retry').addEventListener('click', loadHistory);
+    return;
+  }
+  historyLogs = data || [];
+  const byDate = new Map();
+  historyLogs.forEach((log) => {
+    if (!byDate.has(log.log_date)) byDate.set(log.log_date, []);
+    byDate.get(log.log_date).push(log);
+  });
+  historyDays = [...byDate.entries()].map(([date, logs]) => ({ date, logs }));
+  renderCalStrip();
+  renderHistoryList();
+}
+
+// last 14 days, oldest -> newest; dot + tap-to-scroll on days with workouts
+function renderCalStrip() {
+  const strip = $('#cal-strip');
+  const have = new Set(historyDays.map((d) => d.date));
+  strip.innerHTML = '';
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const iso = localISO(d);
+    const has = have.has(iso);
+    const b = document.createElement('button');
+    b.className = 'cal-day';
+    b.disabled = !has;
+    b.innerHTML = `
+      <span class="cal-wd">${escapeHtml(d.toLocaleDateString(undefined, { weekday: 'narrow' }))}</span>
+      <span class="cal-num">${d.getDate()}</span>
+      <span class="cal-dot${has ? '' : ' off'}"></span>`;
+    if (has) b.addEventListener('click', () => {
+      $$('#cal-strip .cal-day').forEach((x) => x.classList.toggle('sel', x === b));
+      document.getElementById(`day-${iso}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    strip.appendChild(b);
+  }
+  strip.scrollLeft = strip.scrollWidth; // start with today in view
+}
+
+function renderHistoryList() {
+  const list = $('#history-list');
+  if (historyDays.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="big">📈</div>
+        No workouts yet.<br>
+        Log your first on the <b>Today</b> tab.
+      </div>`;
+    return;
+  }
+  list.innerHTML = '';
+  historyDays.forEach(({ date, logs }) => {
+    const card = document.createElement('div');
+    card.className = 'day-card';
+    card.id = `day-${date}`;
+    card.innerHTML = `<div class="day-head">${escapeHtml(prettyHistoryDate(date))}</div>`;
+    logs.forEach((log) => {
+      const ex = log.exercises || {};
+      const row = document.createElement('button');
+      row.className = 'hx-row';
+      row.innerHTML = `
+        <div class="wo-main">
+          <div class="wo-name">${escapeHtml(ex.name || 'Unknown exercise')}</div>
+          <div class="wo-sets">${escapeHtml(formatSets(log.sets, ex.measure_type))}</div>
+        </div>
+        ${ex.muscle_group ? `<span class="wo-muscle">${escapeHtml(ex.muscle_group)}</span>` : ''}`;
+      row.addEventListener('click', () => openChart(ex));
+      card.appendChild(row);
+    });
+    list.appendChild(card);
+  });
+}
+
+/* ---------- progress chart ---------- */
+// Best set per day: heaviest kg / longest secs / most reps; ascending by date.
+// Days with no valid value (malformed legacy sets) are skipped, not plotted as 0.
+function bestPerDay(exerciseId, measureType) {
+  const byDate = new Map();
+  historyLogs.forEach((log) => {
+    if (log.exercise_id !== exerciseId) return;
+    const vals = (Array.isArray(log.sets) ? log.sets : []).map((s) => {
+      if (measureType === 'time') return setSecs(s);
+      if (measureType === 'reps') return s?.reps ?? null;
+      return s?.kg ?? null;
+    }).filter((v) => v != null);
+    if (vals.length === 0) return;
+    const best = Math.max(...vals);
+    const prev = byDate.get(log.log_date);
+    byDate.set(log.log_date, prev == null ? best : Math.max(prev, best));
+  });
+  return [...byDate.entries()]
+    .map(([date, value]) => ({ date, value }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+function chartValueLabel(v, measureType) {
+  if (measureType === 'time') return formatDuration(Math.round(v));
+  if (measureType === 'reps') return String(Math.round(v));
+  return `${Math.round(v * 10) / 10}kg`;
+}
+
+function openChart(exercise) {
+  $('#chart-title').textContent = exercise.name || 'Progress';
+  const points = bestPerDay(exercise.id, exercise.measure_type);
+  $('#chart-sub').textContent = points.length
+    ? `Best set per day · ${points.length} session${points.length === 1 ? '' : 's'}`
+    : '';
+  $('#chart-box').innerHTML = points.length
+    ? buildChartSVG(points, exercise.measure_type)
+    : '<div class="empty-state">Not enough data to chart yet.</div>';
+  openSheet('chart');
+}
+
+// Hand-rolled inline SVG line chart. Points are index-spaced (not time-spaced):
+// sparse gym sessions read better evenly spaced, dates stay visible as labels.
+function buildChartSVG(points, measureType) {
+  const W = 320, H = 200, L = 44, R = 308, T = 14, B = 172;
+  const r1 = (n) => Math.round(n * 10) / 10;
+  const vals = points.map((p) => p.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  let range = max - min;
+  if (range === 0) range = max || 1;
+  const yMin = Math.max(0, min - range * 0.2);
+  const yMax = max + range * 0.2;
+  const y = (v) => r1(B - ((v - yMin) / (yMax - yMin)) * (B - T));
+  const x = (i) => r1(points.length === 1 ? (L + R) / 2 : L + (i / (points.length - 1)) * (R - L));
+  const xDate = (iso) => new Date(iso + 'T12:00:00')
+    .toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">`;
+
+  // 4 horizontal gridlines with value labels in the left gutter
+  for (let g = 0; g < 4; g++) {
+    const v = yMin + ((yMax - yMin) * g) / 3;
+    const gy = y(v);
+    svg += `<line x1="${L}" y1="${gy}" x2="${R}" y2="${gy}" stroke="var(--border)" stroke-width="1"/>`;
+    svg += `<text x="${L - 6}" y="${gy + 3.5}" text-anchor="end" font-size="10" fill="var(--text-dim)">${chartValueLabel(v, measureType)}</text>`;
+  }
+
+  // x labels: first + last, plus middle when 3+ points
+  const labelIdx = points.length >= 3
+    ? [0, Math.floor((points.length - 1) / 2), points.length - 1]
+    : points.map((_, i) => i);
+  [...new Set(labelIdx)].forEach((i) => {
+    const anchor = points.length === 1 ? 'middle'
+      : (i === 0 ? 'start' : (i === points.length - 1 ? 'end' : 'middle'));
+    svg += `<text x="${x(i)}" y="${H - 8}" text-anchor="${anchor}" font-size="10" fill="var(--text-dim)">${xDate(points[i].date)}</text>`;
+  });
+
+  if (points.length > 1) {
+    const pts = points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  points.forEach((p, i) => {
+    const last = i === points.length - 1;
+    svg += `<circle cx="${x(i)}" cy="${y(p.value)}" r="${last ? 4.5 : 3.5}" fill="var(--accent)"/>`;
+    if (last) {
+      const anchor = points.length === 1 ? 'middle' : 'end';
+      svg += `<text x="${x(i)}" y="${y(p.value) - 9}" text-anchor="${anchor}" font-size="11" font-weight="700" fill="var(--accent)">${chartValueLabel(p.value, measureType)}</text>`;
+    }
+  });
+  svg += '</svg>';
+  if (points.length === 1) {
+    svg += '<div class="chart-note">Only one session logged — log more to see a trend.</div>';
+  }
+  return svg;
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 function switchTab(tab) {
@@ -1276,6 +1542,7 @@ function switchTab(tab) {
   ['today', 'history', 'group', 'profile'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
+  if (tab === 'history') loadHistory();
 }
 
 function enterApp() {
