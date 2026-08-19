@@ -224,6 +224,7 @@ input::placeholder{ color: var(--text-dim); }
   height: 100%;
   border: none;
   padding: 0;
+  pointer-events: none;
 }
 .head-avatar{ pointer-events: none; }
 
@@ -448,6 +449,17 @@ input::placeholder{ color: var(--text-dim); }
 .row-del{ color: var(--text-dim); padding: 8px; font-size: 18px; flex-shrink: 0; line-height: 1; }
 .row-del:active{ color: var(--danger); }
 .unit-sfx{ color: var(--text-dim); font-size: 14px; flex-shrink: 0; }
+.unit-toggle{ display: flex; gap: 4px; flex-shrink: 0; }
+.unit-toggle button{
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+.unit-toggle button.sel{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .addset-btn{
   width: 100%;
   margin-top: 12px;
@@ -674,12 +686,28 @@ function prettyDate(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-// Format a sets jsonb array for display, e.g. "20kg x 12, 25kg x 10" / "15 mins" / "12 x 3"
+// Duration display: 45 -> "45s", 120 -> "2m", 150 -> "2m 30s"
+function formatDuration(secs) {
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
+}
+
+// Normalize a time set to seconds; supports new {secs} and legacy {mins}
+function setSecs(s) {
+  if (s?.secs != null) return s.secs;
+  if (s?.mins != null) return Math.round(s.mins * 60);
+  return null;
+}
+
+// Format a sets jsonb array for display, e.g. "20kg x 12, 25kg x 10" / "45s, 40s" / "12 x 3"
 function formatSets(sets, measureType) {
   if (!Array.isArray(sets) || sets.length === 0) return '—';
   if (measureType === 'time') {
-    const mins = sets[0]?.mins ?? 0;
-    return `${mins} min${mins === 1 ? '' : 's'}`;
+    const durs = sets.map(setSecs).filter((v) => v != null);
+    if (durs.length === 0) return '—';
+    if (durs.length > 1 && durs.every((v) => v === durs[0])) return `${formatDuration(durs[0])} x ${durs.length}`;
+    return durs.map(formatDuration).join(', ');
   }
   if (measureType === 'reps') {
     const reps = sets.map((s) => s.reps ?? 0);
@@ -1094,18 +1122,15 @@ function openEntryForEdit(log) {
 async function openEntry(prefillSets) {
   const mt = currentExercise.measure_type;
   $('#entry-title').textContent = currentExercise.name;
-  $('#addset-btn').classList.toggle('hidden', mt === 'time');
+  $('#addset-btn').classList.remove('hidden');
   $('#last-hint').textContent = 'Loading last session…';
 
   const rows = $('#set-rows');
   rows.innerHTML = '';
-  if (prefillSets.length > 0) {
-    prefillSets.forEach((s) => addSetRow(mt, s));
-  } else if (mt === 'time') {
-    addSetRow(mt, {});
-  } else {
-    addSetRow(mt, {});
-  }
+  // time: skip malformed legacy sets (neither secs nor mins)
+  const pre = (mt === 'time') ? prefillSets.filter((s) => setSecs(s) != null) : prefillSets;
+  if (pre.length > 0) pre.forEach((s) => addSetRow(mt, s));
+  else addSetRow(mt, {});
   openSheet('entry');
   loadLastHint();
 }
@@ -1149,11 +1174,26 @@ function addSetRow(mt, values = {}) {
       <input type="number" inputmode="numeric" min="0" step="1" placeholder="reps" data-f="reps" value="${values.reps ?? ''}">
       <span class="unit-sfx">reps</span>
       <button class="row-del" aria-label="Remove set">✕</button>`;
-  } else { // time
+  } else { // time — value + per-row unit toggle (s/m); prefers m when a whole minute
+    const secs = setSecs(values);
+    const useMins = secs != null && secs >= 60 && secs % 60 === 0;
+    row.dataset.unit = useMins ? 'm' : 's';
+    const val = secs == null ? '' : (useMins ? secs / 60 : secs);
     row.innerHTML = `
-      <span class="set-num">⏱</span>
-      <input type="number" inputmode="decimal" min="0" step="1" placeholder="minutes" data-f="mins" value="${values.mins ?? ''}">
-      <span class="unit-sfx">mins</span>`;
+      <span class="set-num">${n}</span>
+      <input type="number" inputmode="decimal" min="0" placeholder="time" data-f="val" value="${val}">
+      <span class="unit-toggle">
+        <button data-u="s">s</button>
+        <button data-u="m">m</button>
+      </span>
+      <button class="row-del" aria-label="Remove set">✕</button>`;
+    row.querySelectorAll('.unit-toggle button').forEach((b) => {
+      b.classList.toggle('sel', b.dataset.u === row.dataset.unit);
+      b.addEventListener('click', () => {
+        row.dataset.unit = b.dataset.u;
+        row.querySelectorAll('.unit-toggle button').forEach((x) => x.classList.toggle('sel', x === b));
+      });
+    });
   }
   const del = row.querySelector('.row-del');
   if (del) del.addEventListener('click', () => {
@@ -1163,9 +1203,7 @@ function addSetRow(mt, values = {}) {
 }
 
 function renumberRows() {
-  $$('#set-rows .set-row .set-num').forEach((el, i) => {
-    if (el.textContent !== '⏱') el.textContent = i + 1;
-  });
+  $$('#set-rows .set-row .set-num').forEach((el, i) => { el.textContent = i + 1; });
 }
 
 function collectSets(mt) {
@@ -1180,8 +1218,9 @@ function collectSets(mt) {
       sets.push({ kg: vals.kg, reps: vals.reps });
     } else if (mt === 'reps' && vals.reps != null && vals.reps > 0) {
       sets.push({ reps: vals.reps });
-    } else if (mt === 'time' && vals.mins != null && vals.mins > 0) {
-      sets.push({ mins: vals.mins });
+    } else if (mt === 'time' && vals.val != null && vals.val > 0) {
+      const unit = row.dataset.unit || 's';
+      sets.push({ secs: unit === 'm' ? Math.round(vals.val * 60) : Math.round(vals.val) });
     }
   });
   return sets;
@@ -1191,7 +1230,7 @@ async function saveEntry() {
   const mt = currentExercise.measure_type;
   const sets = collectSets(mt);
   if (sets.length === 0) {
-    toast(mt === 'time' ? 'Enter the minutes first' : 'Enter at least one complete set', 'err');
+    toast(mt === 'time' ? 'Enter at least one timed set' : 'Enter at least one complete set', 'err');
     return;
   }
   const btn = $('#save-btn');
@@ -1261,6 +1300,12 @@ function init() {
 
   $$('.nav-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   $('#logout-btn').addEventListener('click', logout);
+
+  $('#date-btn').addEventListener('click', () => {
+    const di = $('#date-input');
+    if (di.showPicker) { try { di.showPicker(); } catch {} }
+    else { di.focus(); di.click(); }
+  });
 
   $('#date-input').addEventListener('change', (e) => {
     if (!e.target.value) return;
