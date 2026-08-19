@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0c">
+<title>RepMate</title>
+<style>
+/* ============================================================
+   DESIGN TOKENS + BASE
+   ============================================================ */
+:root{
+  --bg: #0a0a0c;
+  --surface: #151518;
+  --surface-2: #1e1e23;
+  --border: #2a2a31;
+  --text: #f2f2f0;
+  --text-dim: #9a9aa3;
+  --accent: #c6f542;
+  --accent-dim: #a5d32e;
+  --accent-text: #10130a;
+  --danger: #ff5d5d;
+  --radius: 16px;
+  --nav-h: 64px;
+}
+*{ box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body{ height: 100%; }
+body{
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  overscroll-behavior-y: none;
+}
+#app{
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  position: relative;
+}
+button{
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+input{
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: 100%;
+  outline: none;
+}
+input:focus{ border-color: var(--accent-dim); }
+input::placeholder{ color: var(--text-dim); }
+.hidden{ display: none !important; }
+
+/* ============================================================
+   LOGIN SCREEN
+   ============================================================ */
+#screen-login{
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 20px 32px;
+}
+.logo-box{
+  width: 96px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: center;
+}
+.logo-box img{ width: 96px; height: auto; display: block; }
+.logo-box.no-logo{ display: none; }
+.brand{
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+.brand span{ color: var(--accent); }
+.login-sub{
+  color: var(--text-dim);
+  margin: 6px 0 32px;
+  font-size: 15px;
+}
+
+/* member list */
+#member-list{ width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.member-card{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  min-height: 68px;
+  text-align: left;
+  transition: transform .08s ease;
+}
+.member-card:active{ transform: scale(.98); background: var(--surface-2); }
+.avatar{
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.avatar img{ width: 100%; height: 100%; object-fit: cover; }
+.member-name{ font-weight: 600; font-size: 17px; }
+.member-tag{ font-size: 12px; color: var(--text-dim); }
+
+/* pin pad */
+#pin-view{ width: 100%; display: flex; flex-direction: column; align-items: center; }
+.pin-back{
+  align-self: flex-start;
+  color: var(--text-dim);
+  font-size: 15px;
+  padding: 8px 4px;
+  margin-bottom: 8px;
+}
+.pin-who{ font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+.pin-hint{ color: var(--text-dim); font-size: 14px; margin-bottom: 22px; min-height: 20px; }
+.pin-hint.error{ color: var(--danger); }
+.pin-dots{ display: flex; gap: 16px; margin-bottom: 30px; }
+.pin-dot{
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--text-dim);
+}
+.pin-dot.filled{ background: var(--accent); border-color: var(--accent); }
+@keyframes shake{
+  0%,100%{ transform: translateX(0); }
+  20%{ transform: translateX(-10px); }
+  40%{ transform: translateX(10px); }
+  60%{ transform: translateX(-7px); }
+  80%{ transform: translateX(7px); }
+}
+.pin-dots.shake{ animation: shake .45s ease; }
+.pin-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 76px);
+  gap: 14px;
+}
+.pin-key{
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 26px;
+  font-weight: 600;
+}
+.pin-key:active{ background: var(--surface-2); transform: scale(.95); }
+.pin-key.ghost{ background: none; border: none; font-size: 20px; color: var(--text-dim); }
+
+/* login states */
+.state-msg{
+  width: 100%;
+  text-align: center;
+  color: var(--text-dim);
+  padding: 32px 12px;
+  font-size: 15px;
+}
+.retry-btn{
+  margin-top: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-weight: 600;
+  color: var(--text);
+}
+.spinner{
+  width: 28px; height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin{ to{ transform: rotate(360deg); } }
+
+/* ============================================================
+   MAIN SCREEN + TABS
+   ============================================================ */
+#screen-main{ padding-bottom: calc(var(--nav-h) + 20px); }
+.tab-view{ padding: 18px 16px 8px; }
+
+/* today header */
+.today-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.date-btn{
+  position: relative;
+  text-align: left;
+  padding: 4px 0;
+}
+.date-label{ font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 5px; }
+.date-big{ font-size: 24px; font-weight: 800; letter-spacing: -0.4px; }
+.date-btn input[type="date"]{
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  padding: 0;
+}
+.head-avatar{ pointer-events: none; }
+
+/* workout cards */
+#today-list{ display: flex; flex-direction: column; gap: 10px; }
+.wo-card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 14px 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.wo-card:active{ background: var(--surface-2); }
+.wo-main{ flex: 1; min-width: 0; }
+.wo-name{ font-weight: 700; font-size: 16px; }
+.wo-sets{ color: var(--accent); font-size: 14px; margin-top: 3px; }
+.wo-muscle{ font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.wo-del{
+  color: var(--text-dim);
+  padding: 10px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.wo-del:active{ color: var(--danger); background: var(--surface-2); }
+
+.empty-state{
+  text-align: center;
+  color: var(--text-dim);
+  padding: 48px 20px;
+  font-size: 15px;
+}
+.empty-state .big{ font-size: 34px; margin-bottom: 10px; }
+
+.add-btn{
+  position: fixed;
+  bottom: calc(var(--nav-h) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 800;
+  font-size: 16px;
+  border-radius: 999px;
+  padding: 15px 26px;
+  box-shadow: 0 6px 24px rgba(198,245,66,.25);
+  z-index: 20;
+}
+.add-btn:active{ transform: translateX(-50%) scale(.96); }
+
+/* coming soon placeholders */
+.soon{
+  min-height: 60dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 0 24px;
+}
+.soon .icon{ font-size: 40px; }
+.soon h2{ color: var(--text); font-size: 20px; }
+.logout-btn{
+  margin-top: 26px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--danger);
+  font-weight: 600;
+  border-radius: 12px;
+  padding: 13px 30px;
+}
+.profile-who{ color: var(--text); font-weight: 600; }
+
+/* ============================================================
+   BOTTOM NAV
+   ============================================================ */
+#bottom-nav{
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: rgba(16,16,19,.96);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  z-index: 30;
+}
+.nav-btn{
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+.nav-btn svg{ width: 24px; height: 24px; }
+.nav-btn.active{ color: var(--accent); }
+
+/* ============================================================
+   BOTTOM SHEET (add / edit workout)
+   ============================================================ */
+#sheet-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  z-index: 40;
+  opacity: 0;
+  transition: opacity .2s;
+}
+#sheet-backdrop.show{ opacity: 1; }
+#sheet{
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 105%);
+  width: 100%;
+  max-width: 480px;
+  max-height: 88dvh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+  padding: 14px 18px calc(24px + env(safe-area-inset-bottom));
+  z-index: 41;
+  transition: transform .25s ease;
+}
+#sheet.show{ transform: translate(-50%, 0); }
+.sheet-grab{
+  width: 42px; height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 14px;
+}
+.sheet-title{
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sheet-close{ color: var(--text-dim); font-size: 22px; padding: 4px 8px; line-height: 1; }
+
+/* exercise search */
+#ex-results{ display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.ex-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  min-height: 54px;
+  text-align: left;
+  width: 100%;
+}
+.ex-row:active{ border-color: var(--accent-dim); }
+.ex-row .ex-name{ font-weight: 600; }
+.ex-row .ex-meta{ font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.ex-row.create-row{ border-style: dashed; color: var(--accent); }
+.search-note{ color: var(--text-dim); font-size: 14px; text-align: center; padding: 14px 4px; }
+
+/* create-exercise mini form */
+.form-label{ font-size: 13px; color: var(--text-dim); margin: 16px 0 8px; font-weight: 600; }
+.seg{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.seg button{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 0;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.seg button.sel{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.chips{ display: flex; flex-wrap: wrap; gap: 8px; }
+.chip{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.chip.sel{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+/* set entry */
+.last-hint{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+.last-hint b{ color: var(--accent); font-weight: 600; }
+#set-rows{ display: flex; flex-direction: column; gap: 10px; }
+.set-row{ display: flex; align-items: center; gap: 10px; }
+.set-num{ width: 26px; color: var(--text-dim); font-size: 14px; text-align: center; flex-shrink: 0; }
+.set-row input{ text-align: center; font-size: 17px; font-weight: 600; padding: 13px 8px; }
+.set-x{ color: var(--text-dim); flex-shrink: 0; }
+.row-del{ color: var(--text-dim); padding: 8px; font-size: 18px; flex-shrink: 0; line-height: 1; }
+.row-del:active{ color: var(--danger); }
+.unit-sfx{ color: var(--text-dim); font-size: 14px; flex-shrink: 0; }
+.addset-btn{
+  width: 100%;
+  margin-top: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 13px 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+.primary-btn{
+  width: 100%;
+  margin-top: 18px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 800;
+  font-size: 17px;
+  border-radius: 14px;
+  padding: 16px 0;
+}
+.primary-btn:active{ transform: scale(.98); }
+.primary-btn:disabled{ opacity: .5; }
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+#toast{
+  position: fixed;
+  bottom: calc(var(--nav-h) + 78px);
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  max-width: min(440px, calc(100vw - 40px));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  text-align: center;
+}
+#toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.ok{ border-color: var(--accent-dim); color: var(--accent); }
+#toast.err{ border-color: var(--danger); color: var(--danger); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= LOGIN ================= -->
+  <div id="screen-login" class="hidden">
+    <div class="logo-box" id="logo-box">
+      <img id="logo-img" src="logo.png" alt="RepMate logo">
+    </div>
+    <div class="brand">Rep<span>Mate</span></div>
+    <div class="login-sub">Who's training?</div>
+
+    <div id="member-list"></div>
+
+    <div id="pin-view" class="hidden">
+      <button class="pin-back" id="pin-back">&larr; All members</button>
+      <div class="pin-who" id="pin-who"></div>
+      <div class="pin-hint" id="pin-hint">Enter your 4-digit PIN</div>
+      <div class="pin-dots" id="pin-dots">
+        <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+      </div>
+      <div class="pin-grid" id="pin-grid"></div>
+    </div>
+  </div>
+
+  <!-- ================= MAIN ================= -->
+  <div id="screen-main" class="hidden">
+
+    <!-- TODAY -->
+    <div id="view-today" class="tab-view">
+      <div class="today-head">
+        <button class="date-btn" id="date-btn">
+          <div class="date-label" id="date-label">Today ▾</div>
+          <div class="date-big" id="date-big"></div>
+          <input type="date" id="date-input" aria-label="Change date">
+        </button>
+        <div class="avatar head-avatar" id="head-avatar"></div>
+      </div>
+      <div id="today-list"></div>
+      <button class="add-btn" id="add-btn">+ Add Workout</button>
+    </div>
+
+    <!-- HISTORY -->
+    <div id="view-history" class="tab-view hidden">
+      <div class="soon">
+        <div class="icon">📈</div>
+        <h2>History</h2>
+        <p>Charts and past sessions are coming soon.</p>
+      </div>
+    </div>
+
+    <!-- GROUP -->
+    <div id="view-group" class="tab-view hidden">
+      <div class="soon">
+        <div class="icon">👥</div>
+        <h2>Group</h2>
+        <p>See what your gym buddies lifted — coming soon.</p>
+      </div>
+    </div>
+
+    <!-- PROFILE -->
+    <div id="view-profile" class="tab-view hidden">
+      <div class="soon">
+        <div class="icon">💪</div>
+        <h2>Profile</h2>
+        <p>Signed in as <span class="profile-who" id="profile-who"></span></p>
+        <p>Stats, body weight and photos are coming soon.</p>
+        <button class="logout-btn" id="logout-btn">Log out</button>
+      </div>
+    </div>
+
+    <!-- NAV -->
+    <nav id="bottom-nav">
+      <button class="nav-btn active" data-tab="today">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5h11v11h-11z"/><path d="M3 10v4M21 10v4M6.5 12h11"/></svg>
+        Today
+      </button>
+      <button class="nav-btn" data-tab="history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+        History
+      </button>
+      <button class="nav-btn" data-tab="group">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.7c2.6.4 4.5 2.1 4.5 4.8"/></svg>
+        Group
+      </button>
+      <button class="nav-btn" data-tab="profile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c0-4 3.5-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/></svg>
+        Profile
+      </button>
+    </nav>
+  </div>
+
+  <!-- ================= SHEET ================= -->
+  <div id="sheet-backdrop" class="hidden"></div>
+  <div id="sheet" aria-hidden="true">
+    <div class="sheet-grab"></div>
+
+    <!-- step 1: search -->
+    <div id="sheet-search" class="hidden">
+      <div class="sheet-title">Add workout <button class="sheet-close" data-close>&times;</button></div>
+      <input type="search" id="ex-search" placeholder="Search exercises… e.g. Bench Press" autocomplete="off">
+      <div id="ex-results"></div>
+    </div>
+
+    <!-- step 2: create exercise -->
+    <div id="sheet-create" class="hidden">
+      <div class="sheet-title">New exercise <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Name</div>
+      <input type="text" id="new-ex-name" autocomplete="off">
+      <div class="form-label">Measured by</div>
+      <div class="seg" id="measure-seg">
+        <button data-mt="weight" class="sel">Weight</button>
+        <button data-mt="time">Time</button>
+        <button data-mt="reps">Reps</button>
+      </div>
+      <div class="form-label">Muscle group (optional)</div>
+      <div class="chips" id="muscle-chips"></div>
+      <button class="primary-btn" id="create-ex-btn">Create &amp; add sets</button>
+    </div>
+
+    <!-- step 3: set entry -->
+    <div id="sheet-entry" class="hidden">
+      <div class="sheet-title"><span id="entry-title"></span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="last-hint" id="last-hint"></div>
+      <div id="set-rows"></div>
+      <button class="addset-btn hidden" id="addset-btn">+ Add Set</button>
+      <button class="primary-btn" id="save-btn">Save</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+/* ============================================================
+   CONFIG
+   ============================================================ */
+const SUPABASE_URL = 'https://nclmctjqbcxvrgglqork.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_KJXwX1ZDZloFRWurhtjxyA_wg2UjEm9';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const SESSION_KEY = 'repmate_session';
+const MUSCLE_GROUPS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => [...document.querySelectorAll(sel)];
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function initials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2)
+    .map((w) => w[0].toUpperCase()).join('');
+}
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Local date as YYYY-MM-DD (avoids UTC off-by-one from toISOString)
+function localISO(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function prettyDate(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// Format a sets jsonb array for display, e.g. "20kg x 12, 25kg x 10" / "15 mins" / "12 x 3"
+function formatSets(sets, measureType) {
+  if (!Array.isArray(sets) || sets.length === 0) return '—';
+  if (measureType === 'time') {
+    const mins = sets[0]?.mins ?? 0;
+    return `${mins} min${mins === 1 ? '' : 's'}`;
+  }
+  if (measureType === 'reps') {
+    const reps = sets.map((s) => s.reps ?? 0);
+    if (reps.length > 1 && reps.every((r) => r === reps[0])) return `${reps[0]} x ${reps.length}`;
+    return reps.join(', ') + ' reps';
+  }
+  // weight
+  return sets.map((s) => `${s.kg ?? 0}kg x ${s.reps ?? 0}`).join(', ');
+}
+
+let toastTimer = null;
+function toast(msg, kind = 'ok') {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = `show ${kind}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, kind === 'err' ? 4000 : 2000);
+}
+
+function sbError(prefix, error) {
+  console.error(prefix, error);
+  toast(`${prefix}: ${error?.message || 'Unknown error'}`, 'err');
+}
+
+/* ============================================================
+   AUTH
+   ============================================================ */
+let session = null; // { member_id, name, is_admin }
+let pinMember = null;
+let pinBuffer = '';
+let pinChecking = false;
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return (s && s.member_id) ? s : null;
+  } catch { return null; }
+}
+
+function showLogin() {
+  session = null;
+  $('#screen-main').classList.add('hidden');
+  $('#screen-login').classList.remove('hidden');
+  showMemberList();
+  fetchMembers();
+}
+
+function showMemberList() {
+  pinMember = null;
+  $('#pin-view').classList.add('hidden');
+  $('#member-list').classList.remove('hidden');
+}
+
+async function fetchMembers() {
+  const list = $('#member-list');
+  list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading members…</div>';
+  const { data, error } = await sb.from('members')
+    .select('id, name, is_admin, avatar_url')
+    .order('name');
+  if (error) {
+    list.innerHTML = `<div class="state-msg">Couldn't load members.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="members-retry">Retry</button></div>`;
+    $('#members-retry').addEventListener('click', fetchMembers);
+    return;
+  }
+  if (!data || data.length === 0) {
+    list.innerHTML = '<div class="state-msg">No members yet. Add one in Supabase to get started.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  data.forEach((m) => {
+    const btn = document.createElement('button');
+    btn.className = 'member-card';
+    const av = m.avatar_url
+      ? `<img src="${escapeHtml(m.avatar_url)}" alt="" onerror="this.remove()">`
+      : escapeHtml(initials(m.name));
+    btn.innerHTML = `
+      <div class="avatar">${av}</div>
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        ${m.is_admin ? '<div class="member-tag">Admin</div>' : ''}
+      </div>`;
+    btn.addEventListener('click', () => openPinPad(m));
+    list.appendChild(btn);
+  });
+}
+
+function openPinPad(member) {
+  pinMember = member;
+  pinBuffer = '';
+  pinChecking = false;
+  $('#member-list').classList.add('hidden');
+  $('#pin-view').classList.remove('hidden');
+  $('#pin-who').textContent = member.name;
+  setPinHint('Enter your 4-digit PIN', false);
+  renderPinDots();
+}
+
+function setPinHint(msg, isError) {
+  const el = $('#pin-hint');
+  el.textContent = msg;
+  el.classList.toggle('error', !!isError);
+}
+
+function renderPinDots() {
+  $$('#pin-dots .pin-dot').forEach((d, i) => d.classList.toggle('filled', i < pinBuffer.length));
+}
+
+function buildPinGrid() {
+  const grid = $('#pin-grid');
+  const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
+  grid.innerHTML = '';
+  keys.forEach((k) => {
+    const b = document.createElement('button');
+    if (k === '') { b.className = 'pin-key ghost'; b.disabled = true; }
+    else {
+      b.className = 'pin-key' + (k === '⌫' ? ' ghost' : '');
+      b.textContent = k;
+      b.addEventListener('click', () => pinPress(k));
+    }
+    if (k !== '') b.textContent = k;
+    grid.appendChild(b);
+  });
+}
+
+async function pinPress(key) {
+  if (pinChecking) return;
+  if (key === '⌫') {
+    pinBuffer = pinBuffer.slice(0, -1);
+    renderPinDots();
+    return;
+  }
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += key;
+  renderPinDots();
+  if (pinBuffer.length === 4) await checkPin();
+}
+
+async function checkPin() {
+  pinChecking = true;
+  setPinHint('Checking…', false);
+  try {
+    const hash = await sha256Hex(pinBuffer);
+    if (hash === pinMember.pin_hash || await fetchAndCompareHash(hash)) {
+      session = { member_id: pinMember.id, name: pinMember.name, is_admin: !!pinMember.is_admin };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      enterApp();
+      return;
+    }
+    wrongPin();
+  } catch (e) {
+    setPinHint('Couldn\'t verify PIN — check connection and retry.', true);
+    pinBuffer = '';
+    renderPinDots();
+    console.error(e);
+  } finally {
+    pinChecking = false;
+  }
+}
+
+// pin_hash isn't fetched with the member list (kept out of the UI payload);
+// fetch it on demand and cache it on the member object.
+async function fetchAndCompareHash(hash) {
+  if (pinMember.pin_hash === undefined) {
+    const { data, error } = await sb.from('members')
+      .select('pin_hash').eq('id', pinMember.id).single();
+    if (error) throw error;
+    pinMember.pin_hash = data.pin_hash;
+  }
+  return hash === pinMember.pin_hash;
+}
+
+function wrongPin() {
+  const dots = $('#pin-dots');
+  dots.classList.remove('shake');
+  void dots.offsetWidth; // restart animation
+  dots.classList.add('shake');
+  setPinHint('Wrong PIN — try again', true);
+  if (navigator.vibrate) navigator.vibrate(120);
+  setTimeout(() => { pinBuffer = ''; renderPinDots(); }, 350);
+}
+
+function logout() {
+  localStorage.removeItem(SESSION_KEY);
+  showLogin();
+}
+
+/* ============================================================
+   TODAY
+   ============================================================ */
+let selectedDate = localISO();
+let todayLogs = [];        // rows for selected date (with joined exercise)
+let sheetStep = null;      // 'search' | 'create' | 'entry'
+let currentExercise = null; // { id, name, measure_type, muscle_group }
+let editingLog = null;     // existing workout_logs row when editing
+let createMeasure = 'weight';
+let createMuscle = null;
+let searchTimer = null;
+let searchSeq = 0;
+
+function renderDateHeader() {
+  const isToday = selectedDate === localISO();
+  $('#date-label').textContent = (isToday ? 'Today' : 'Backfill') + ' ▾';
+  $('#date-big').textContent = prettyDate(selectedDate);
+  $('#date-input').value = selectedDate;
+}
+
+async function loadTodayLogs() {
+  const list = $('#today-list');
+  list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading workouts…</div>';
+  const { data, error } = await sb.from('workout_logs')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group)')
+    .eq('member_id', session.member_id)
+    .eq('log_date', selectedDate)
+    .order('id');
+  if (error) {
+    list.innerHTML = `<div class="state-msg">Couldn't load workouts.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="logs-retry">Retry</button></div>`;
+    $('#logs-retry').addEventListener('click', loadTodayLogs);
+    return;
+  }
+  todayLogs = data || [];
+  renderTodayList();
+}
+
+function renderTodayList() {
+  const list = $('#today-list');
+  if (todayLogs.length === 0) {
+    const isToday = selectedDate === localISO();
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="big">🏋️</div>
+        No workouts logged ${isToday ? 'today yet' : 'for this day'}.<br>
+        Tap <b>+ Add Workout</b> to log your first set.
+      </div>`;
+    return;
+  }
+  list.innerHTML = '';
+  todayLogs.forEach((log) => {
+    const ex = log.exercises || {};
+    const card = document.createElement('div');
+    card.className = 'wo-card';
+    card.innerHTML = `
+      <div class="wo-main">
+        <div class="wo-name">${escapeHtml(ex.name || 'Unknown exercise')}</div>
+        <div class="wo-sets">${escapeHtml(formatSets(log.sets, ex.measure_type))}</div>
+        ${ex.muscle_group ? `<div class="wo-muscle">${escapeHtml(ex.muscle_group)}</div>` : ''}
+      </div>
+      <button class="wo-del" aria-label="Delete">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+      </button>`;
+
+    // tap main area -> edit; delete icon or long-press -> delete (confirm)
+    let lpTimer = null, lpFired = false;
+    card.addEventListener('pointerdown', () => {
+      lpFired = false;
+      lpTimer = setTimeout(() => { lpFired = true; confirmDelete(log); }, 600);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) =>
+      card.addEventListener(ev, () => clearTimeout(lpTimer)));
+    card.querySelector('.wo-main').addEventListener('click', () => {
+      if (!lpFired) openEntryForEdit(log);
+    });
+    card.querySelector('.wo-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!lpFired) confirmDelete(log);
+    });
+    list.appendChild(card);
+  });
+}
+
+async function confirmDelete(log) {
+  const name = log.exercises?.name || 'this workout';
+  if (!confirm(`Delete ${name} for ${prettyDate(log.log_date)}?`)) return;
+  const { error } = await sb.from('workout_logs').delete().eq('id', log.id);
+  if (error) { sbError('Delete failed', error); return; }
+  toast('Deleted');
+  loadTodayLogs();
+}
+
+/* ---------- sheet plumbing ---------- */
+function openSheet(step) {
+  sheetStep = step;
+  ['search', 'create', 'entry'].forEach((s) =>
+    $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
+  $('#sheet-backdrop').classList.remove('hidden');
+  requestAnimationFrame(() => {
+    $('#sheet-backdrop').classList.add('show');
+    $('#sheet').classList.add('show');
+  });
+}
+
+function closeSheet() {
+  sheetStep = null;
+  editingLog = null;
+  currentExercise = null;
+  $('#sheet').classList.remove('show');
+  $('#sheet-backdrop').classList.remove('show');
+  setTimeout(() => $('#sheet-backdrop').classList.add('hidden'), 220);
+}
+
+/* ---------- step 1: search ---------- */
+function openSearch() {
+  openSheet('search');
+  const input = $('#ex-search');
+  input.value = '';
+  $('#ex-results').innerHTML = '<div class="search-note">Type to search exercises.</div>';
+  setTimeout(() => input.focus(), 250);
+}
+
+function onSearchInput() {
+  clearTimeout(searchTimer);
+  const term = $('#ex-search').value.trim();
+  if (!term) {
+    $('#ex-results').innerHTML = '<div class="search-note">Type to search exercises.</div>';
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(term), 250);
+}
+
+async function runSearch(term) {
+  const seq = ++searchSeq;
+  const box = $('#ex-results');
+  box.innerHTML = '<div class="search-note">Searching…</div>';
+  const { data, error } = await sb.from('exercises')
+    .select('id, name, measure_type, muscle_group')
+    .ilike('name', `%${term}%`)
+    .order('name')
+    .limit(10);
+  if (seq !== searchSeq) return; // stale response
+  if (error) {
+    box.innerHTML = `<div class="search-note">Search failed: ${escapeHtml(error.message)}</div>`;
+    sbError('Search failed', error);
+    return;
+  }
+  box.innerHTML = '';
+  (data || []).forEach((ex) => {
+    const b = document.createElement('button');
+    b.className = 'ex-row';
+    b.innerHTML = `
+      <span class="ex-name">${escapeHtml(ex.name)}</span>
+      <span class="ex-meta">${escapeHtml(ex.muscle_group || '')} · ${escapeHtml(ex.measure_type)}</span>`;
+    b.addEventListener('click', () => openEntryForNew(ex));
+    box.appendChild(b);
+  });
+  const exact = (data || []).some((ex) => ex.name.toLowerCase() === term.toLowerCase());
+  if (!exact) {
+    const b = document.createElement('button');
+    b.className = 'ex-row create-row';
+    b.innerHTML = `<span class="ex-name">+ Create "${escapeHtml(term)}"</span>`;
+    b.addEventListener('click', () => openCreate(term));
+    box.appendChild(b);
+  }
+  if ((data || []).length === 0 && exact) {
+    box.innerHTML = '<div class="search-note">No matches.</div>';
+  }
+}
+
+/* ---------- step 2: create exercise ---------- */
+function openCreate(name) {
+  createMeasure = 'weight';
+  createMuscle = null;
+  $('#new-ex-name').value = name;
+  $$('#measure-seg button').forEach((b) => b.classList.toggle('sel', b.dataset.mt === 'weight'));
+  buildMuscleChips();
+  openSheet('create');
+}
+
+function buildMuscleChips() {
+  const box = $('#muscle-chips');
+  box.innerHTML = '';
+  MUSCLE_GROUPS.forEach((g) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (createMuscle === g ? ' sel' : '');
+    c.textContent = g;
+    c.addEventListener('click', () => {
+      createMuscle = (createMuscle === g) ? null : g;
+      buildMuscleChips();
+    });
+    box.appendChild(c);
+  });
+}
+
+async function createExercise() {
+  const name = $('#new-ex-name').value.trim();
+  if (!name) { toast('Give the exercise a name', 'err'); return; }
+  const btn = $('#create-ex-btn');
+  btn.disabled = true;
+  const { data, error } = await sb.from('exercises')
+    .insert({ name, measure_type: createMeasure, muscle_group: createMuscle })
+    .select('id, name, measure_type, muscle_group')
+    .single();
+  btn.disabled = false;
+  if (error) { sbError('Create failed', error); return; }
+  toast(`Created "${data.name}"`);
+  openEntryForNew(data);
+}
+
+/* ---------- step 3: set entry ---------- */
+function openEntryForNew(exercise) {
+  currentExercise = exercise;
+  editingLog = null;
+  openEntry([]);
+}
+
+function openEntryForEdit(log) {
+  currentExercise = log.exercises;
+  editingLog = log;
+  openEntry(Array.isArray(log.sets) ? log.sets : []);
+}
+
+async function openEntry(prefillSets) {
+  const mt = currentExercise.measure_type;
+  $('#entry-title').textContent = currentExercise.name;
+  $('#addset-btn').classList.toggle('hidden', mt === 'time');
+  $('#last-hint').textContent = 'Loading last session…';
+
+  const rows = $('#set-rows');
+  rows.innerHTML = '';
+  if (prefillSets.length > 0) {
+    prefillSets.forEach((s) => addSetRow(mt, s));
+  } else if (mt === 'time') {
+    addSetRow(mt, {});
+  } else {
+    addSetRow(mt, {});
+  }
+  openSheet('entry');
+  loadLastHint();
+}
+
+async function loadLastHint() {
+  const hint = $('#last-hint');
+  const { data, error } = await sb.from('workout_logs')
+    .select('log_date, sets')
+    .eq('member_id', session.member_id)
+    .eq('exercise_id', currentExercise.id)
+    .lt('log_date', selectedDate)
+    .order('log_date', { ascending: false })
+    .limit(1);
+  if (error) {
+    hint.textContent = 'Couldn\'t load last session.';
+    return;
+  }
+  if (!data || data.length === 0) {
+    hint.textContent = 'First time logging this exercise 🎉';
+    return;
+  }
+  const last = data[0];
+  hint.innerHTML = `Last (${escapeHtml(prettyDate(last.log_date))}): <b>${escapeHtml(formatSets(last.sets, currentExercise.measure_type))}</b>`;
+}
+
+function addSetRow(mt, values = {}) {
+  const rows = $('#set-rows');
+  const row = document.createElement('div');
+  row.className = 'set-row';
+  const n = rows.children.length + 1;
+  if (mt === 'weight') {
+    row.innerHTML = `
+      <span class="set-num">${n}</span>
+      <input type="number" inputmode="decimal" min="0" step="0.5" placeholder="kg" data-f="kg" value="${values.kg ?? ''}">
+      <span class="set-x">×</span>
+      <input type="number" inputmode="numeric" min="0" step="1" placeholder="reps" data-f="reps" value="${values.reps ?? ''}">
+      <button class="row-del" aria-label="Remove set">✕</button>`;
+  } else if (mt === 'reps') {
+    row.innerHTML = `
+      <span class="set-num">${n}</span>
+      <input type="number" inputmode="numeric" min="0" step="1" placeholder="reps" data-f="reps" value="${values.reps ?? ''}">
+      <span class="unit-sfx">reps</span>
+      <button class="row-del" aria-label="Remove set">✕</button>`;
+  } else { // time
+    row.innerHTML = `
+      <span class="set-num">⏱</span>
+      <input type="number" inputmode="decimal" min="0" step="1" placeholder="minutes" data-f="mins" value="${values.mins ?? ''}">
+      <span class="unit-sfx">mins</span>`;
+  }
+  const del = row.querySelector('.row-del');
+  if (del) del.addEventListener('click', () => {
+    if (rows.children.length > 1) { row.remove(); renumberRows(); }
+  });
+  rows.appendChild(row);
+}
+
+function renumberRows() {
+  $$('#set-rows .set-row .set-num').forEach((el, i) => {
+    if (el.textContent !== '⏱') el.textContent = i + 1;
+  });
+}
+
+function collectSets(mt) {
+  const sets = [];
+  $$('#set-rows .set-row').forEach((row) => {
+    const vals = {};
+    row.querySelectorAll('input').forEach((inp) => {
+      const v = parseFloat(inp.value);
+      vals[inp.dataset.f] = Number.isFinite(v) ? v : null;
+    });
+    if (mt === 'weight' && vals.kg != null && vals.reps != null && vals.reps > 0) {
+      sets.push({ kg: vals.kg, reps: vals.reps });
+    } else if (mt === 'reps' && vals.reps != null && vals.reps > 0) {
+      sets.push({ reps: vals.reps });
+    } else if (mt === 'time' && vals.mins != null && vals.mins > 0) {
+      sets.push({ mins: vals.mins });
+    }
+  });
+  return sets;
+}
+
+async function saveEntry() {
+  const mt = currentExercise.measure_type;
+  const sets = collectSets(mt);
+  if (sets.length === 0) {
+    toast(mt === 'time' ? 'Enter the minutes first' : 'Enter at least one complete set', 'err');
+    return;
+  }
+  const btn = $('#save-btn');
+  btn.disabled = true;
+  try {
+    // one row per member+exercise+date: update if it exists, else insert
+    let existingId = editingLog?.id ?? null;
+    if (!existingId) {
+      const { data, error } = await sb.from('workout_logs')
+        .select('id')
+        .eq('member_id', session.member_id)
+        .eq('exercise_id', currentExercise.id)
+        .eq('log_date', selectedDate)
+        .limit(1);
+      if (error) { sbError('Save failed', error); return; }
+      existingId = data?.[0]?.id ?? null;
+    }
+    let error;
+    if (existingId) {
+      ({ error } = await sb.from('workout_logs').update({ sets }).eq('id', existingId));
+    } else {
+      ({ error } = await sb.from('workout_logs').insert({
+        member_id: session.member_id,
+        exercise_id: currentExercise.id,
+        log_date: selectedDate,
+        sets,
+      }));
+    }
+    if (error) { sbError('Save failed', error); return; }
+    toast('Saved');
+    closeSheet();
+    loadTodayLogs();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ============================================================
+   NAV
+   ============================================================ */
+function switchTab(tab) {
+  $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  ['today', 'history', 'group', 'profile'].forEach((t) =>
+    $(`#view-${t}`).classList.toggle('hidden', t !== tab));
+  $('#add-btn').classList.toggle('hidden', tab !== 'today');
+}
+
+function enterApp() {
+  $('#screen-login').classList.add('hidden');
+  $('#screen-main').classList.remove('hidden');
+  $('#head-avatar').textContent = initials(session.name);
+  $('#profile-who').textContent = session.name;
+  selectedDate = localISO();
+  renderDateHeader();
+  switchTab('today');
+  loadTodayLogs();
+}
+
+/* ---------- wire up events ---------- */
+function init() {
+  // logo: hide gracefully if logo.png is missing
+  const logo = $('#logo-img');
+  logo.addEventListener('error', () => $('#logo-box').classList.add('no-logo'));
+
+  buildPinGrid();
+  $('#pin-back').addEventListener('click', showMemberList);
+
+  $$('.nav-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  $('#logout-btn').addEventListener('click', logout);
+
+  $('#date-input').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    selectedDate = e.target.value;
+    renderDateHeader();
+    loadTodayLogs();
+  });
+
+  $('#add-btn').addEventListener('click', openSearch);
+  $('#ex-search').addEventListener('input', onSearchInput);
+  $('#create-ex-btn').addEventListener('click', createExercise);
+  $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
+  $('#save-btn').addEventListener('click', saveEntry);
+
+  $$('#measure-seg button').forEach((b) => b.addEventListener('click', () => {
+    createMeasure = b.dataset.mt;
+    $$('#measure-seg button').forEach((x) => x.classList.toggle('sel', x === b));
+  }));
+
+  $('#sheet-backdrop').addEventListener('click', closeSheet);
+  $$('[data-close]').forEach((b) => b.addEventListener('click', closeSheet));
+
+  // boot: auto-login if a session exists
+  session = loadSession();
+  if (session) enterApp();
+  else showLogin();
+}
+
+init();
+</script>
+</body>
+</html>
