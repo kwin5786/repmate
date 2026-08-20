@@ -453,6 +453,25 @@ input::placeholder{ color: var(--text-dim); }
 }
 
 /* ============================================================
+   ADMIN
+   ============================================================ */
+.adm-entry{ width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; }
+.adm-back{ display: block; color: var(--text-dim); font-size: 15px; padding: 8px 4px; margin-bottom: 10px; }
+.adm-add{
+  width: 100%;
+  margin-bottom: 14px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 800;
+  font-size: 15px;
+  border-radius: 14px;
+  padding: 14px 0;
+}
+.adm-row{ display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 0; }
+.adm-row + .adm-row{ border-top: 1px solid var(--border); }
+.adm-reset{ color: var(--accent); font-size: 13px; font-weight: 600; padding: 8px 10px; flex-shrink: 0; }
+
+/* ============================================================
    BOTTOM NAV
    ============================================================ */
 #bottom-nav{
@@ -725,6 +744,13 @@ input::placeholder{ color: var(--text-dim); }
       <button class="logout-btn" id="logout-btn">Log out</button>
     </div>
 
+    <!-- ADMIN (reachable only from Profile, admins only) -->
+    <div id="view-admin" class="tab-view hidden">
+      <button class="adm-back" id="admin-back">&larr; Back to profile</button>
+      <button class="adm-add" id="admin-add-btn">+ Add member</button>
+      <div class="pf-card" id="admin-list"></div>
+    </div>
+
     <!-- NAV -->
     <nav id="bottom-nav">
       <button class="nav-btn active" data-tab="today">
@@ -803,6 +829,26 @@ input::placeholder{ color: var(--text-dim); }
       <input type="number" inputmode="decimal" min="20" max="300" step="0.1" id="ob-weight" placeholder="e.g. 74.5" autocomplete="off">
       <button class="primary-btn" id="ob-save-btn">Save</button>
       <button class="skip-btn" id="ob-skip-btn">Skip for now</button>
+    </div>
+
+    <!-- step 6: admin — add member -->
+    <div id="sheet-admin-add" class="hidden">
+      <div class="sheet-title">Add member <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Name</div>
+      <input type="text" id="adm-name" maxlength="40" autocomplete="off">
+      <div class="form-label">Initial PIN (4 digits)</div>
+      <input type="password" inputmode="numeric" maxlength="4" id="adm-pin" autocomplete="off">
+      <button class="primary-btn" id="adm-add-save">Add member</button>
+    </div>
+
+    <!-- step 7: admin — reset PIN -->
+    <div id="sheet-admin-pin" class="hidden">
+      <div class="sheet-title"><span id="adm-pin-title">Reset PIN</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">New PIN (4 digits)</div>
+      <input type="password" inputmode="numeric" maxlength="4" id="adm-pin1" autocomplete="off">
+      <div class="form-label">Confirm new PIN</div>
+      <input type="password" inputmode="numeric" maxlength="4" id="adm-pin2" autocomplete="off">
+      <button class="primary-btn" id="adm-pin-save">Reset PIN</button>
     </div>
   </div>
 
@@ -1217,7 +1263,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart', 'onboard'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -1785,6 +1831,11 @@ function renderProfile() {
     : '<div class="empty-state">No weight entries yet — log your first above.</div>';
 
   $('#profile-body').innerHTML = `
+    ${session.is_admin ? `
+    <button class="pf-card adm-entry" id="pf-admin-btn">
+      <span class="pf-title">Admin</span>
+      <span class="pf-edit">Manage members &rsaquo;</span>
+    </button>` : ''}
     <div class="pf-card">
       <div class="pf-card-head">
         <span class="pf-title">${escapeHtml(session.name)}</span>
@@ -1808,6 +1859,7 @@ function renderProfile() {
     </div>`;
   $('#pf-edit-btn').addEventListener('click', () => openOnboard('edit'));
   $('#bw-log-btn').addEventListener('click', logWeight);
+  if (session.is_admin) $('#pf-admin-btn').addEventListener('click', showAdmin);
 }
 
 /* ---------- body-weight logging ---------- */
@@ -1939,15 +1991,131 @@ async function maybeShowOnboarding() {
 }
 
 /* ============================================================
+   ADMIN (member management — admins only)
+   ============================================================ */
+let adminMembers = [];
+let adminPinTarget = null; // member being PIN-reset
+let adminSeq = 0;
+
+function showAdmin() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  switchTab('admin');
+}
+
+async function loadAdmin() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const seq = ++adminSeq;
+  const box = $('#admin-list');
+  box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading members…</div>';
+  const { data, error } = await sb.from('members')
+    .select('id, name, is_admin, created_at')
+    .order('name');
+  if (seq !== adminSeq) return; // stale response
+  if (error) {
+    box.innerHTML = `<div class="state-msg">Couldn't load members.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="admin-retry">Retry</button></div>`;
+    $('#admin-retry').addEventListener('click', loadAdmin);
+    return;
+  }
+  adminMembers = data || [];
+  renderAdminList();
+}
+
+function renderAdminList() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const box = $('#admin-list');
+  box.innerHTML = '';
+  adminMembers.forEach((m) => {
+    const row = document.createElement('div');
+    row.className = 'adm-row';
+    const joined = m.created_at ? `Joined ${prettyHistoryDate(m.created_at.slice(0, 10))}` : '';
+    row.innerHTML = `
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-tag">${m.is_admin ? 'Admin · ' : ''}${escapeHtml(joined)}</div>
+      </div>
+      <button class="adm-reset">Reset PIN</button>`;
+    row.querySelector('.adm-reset').addEventListener('click', () => openAdminPin(m));
+    box.appendChild(row);
+  });
+}
+
+function openAdminAdd() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  $('#adm-name').value = '';
+  $('#adm-pin').value = '';
+  openSheet('admin-add');
+}
+
+async function saveNewMember() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const name = $('#adm-name').value.trim();
+  const pin = $('#adm-pin').value;
+  if (!name || name.length > 40) { toast('Enter a name (max 40 characters)', 'err'); return; }
+  if (!/^\d{4}$/.test(pin)) { toast('PIN must be exactly 4 digits', 'err'); return; }
+  const btn = $('#adm-add-save');
+  btn.disabled = true;
+  try {
+    // names are the login identity: block duplicates (case-insensitive)
+    const { data: dup, error: dupErr } = await sb.from('members')
+      .select('id').ilike('name', name).limit(1);
+    if (dupErr) { sbError('Add failed', dupErr); return; }
+    if (dup && dup.length > 0) { toast(`A member named "${name}" already exists`, 'err'); return; }
+    const { error } = await sb.from('members').insert({
+      id: crypto.randomUUID(),
+      name,
+      pin_hash: await sha256Hex(pin),
+      is_admin: false,
+    });
+    if (error) { sbError('Add failed', error); return; }
+    toast(`Added "${name}"`);
+    closeSheet();
+    loadAdmin();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openAdminPin(member) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  adminPinTarget = member;
+  $('#adm-pin-title').textContent = `Reset PIN — ${member.name}`;
+  $('#adm-pin1').value = '';
+  $('#adm-pin2').value = '';
+  openSheet('admin-pin');
+}
+
+async function saveNewPin() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  if (!adminPinTarget) return;
+  const p1 = $('#adm-pin1').value, p2 = $('#adm-pin2').value;
+  if (!/^\d{4}$/.test(p1)) { toast('PIN must be exactly 4 digits', 'err'); return; }
+  if (p1 !== p2) { toast('PINs don\'t match', 'err'); return; }
+  const btn = $('#adm-pin-save');
+  btn.disabled = true;
+  try {
+    const { error } = await sb.from('members')
+      .update({ pin_hash: await sha256Hex(p1) })
+      .eq('id', adminPinTarget.id);
+    if (error) { sbError('Reset failed', error); return; }
+    toast(`PIN reset for ${adminPinTarget.name}`);
+    adminPinTarget = null;
+    closeSheet();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 function switchTab(tab) {
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ['today', 'history', 'group', 'profile'].forEach((t) =>
+  ['today', 'history', 'group', 'profile', 'admin'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
   if (tab === 'profile') loadProfile();
+  if (tab === 'admin') loadAdmin();
 }
 
 function enterApp() {
@@ -1998,6 +2166,11 @@ function init() {
   $('#create-ex-btn').addEventListener('click', createExercise);
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
   $('#save-btn').addEventListener('click', saveEntry);
+
+  $('#admin-back').addEventListener('click', () => switchTab('profile'));
+  $('#admin-add-btn').addEventListener('click', openAdminAdd);
+  $('#adm-add-save').addEventListener('click', saveNewMember);
+  $('#adm-pin-save').addEventListener('click', saveNewPin);
 
   $$('#measure-seg button').forEach((b) => b.addEventListener('click', () => {
     createMeasure = b.dataset.mt;
