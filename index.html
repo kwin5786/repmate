@@ -253,6 +253,8 @@ input::placeholder{ color: var(--text-dim); }
   flex-shrink: 0;
 }
 .wo-del:active{ color: var(--danger); background: var(--surface-2); }
+.wo-kcal{ font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.day-total{ color: var(--text-dim); font-size: 13px; margin: -8px 0 12px; }
 
 .empty-state{
   text-align: center;
@@ -325,7 +327,15 @@ input::placeholder{ color: var(--text-dim); }
   padding: 14px 16px;
   scroll-margin-top: 86px;
 }
-.day-head{ font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+.day-head{
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.day-kcal{ font-size: 12px; font-weight: 600; color: var(--text-dim); }
 .hx-row{
   display: flex;
   align-items: center;
@@ -681,6 +691,7 @@ input::placeholder{ color: var(--text-dim); }
         </button>
         <div class="avatar head-avatar" id="head-avatar"></div>
       </div>
+      <div id="today-total" class="day-total hidden"></div>
       <div id="today-list"></div>
       <button class="add-btn" id="add-btn">+ Add Workout</button>
     </div>
@@ -869,6 +880,56 @@ function formatSets(sets, measureType) {
   }
   // weight
   return sets.map((s) => `${s.kg ?? 0}kg x ${s.reps ?? 0}`).join(', ');
+}
+
+/* ---------- calorie estimates (display only) ---------- */
+const MET_BY_TYPE = { time: 3.5, weight: 3.5, reps: 3.8 };
+
+// Checked in order against the lowercased exercise name; first match wins.
+const MET_KEYWORDS = [
+  ['run',   8.0],
+  ['jog',   8.0],
+  ['cycle', 6.8],
+  ['bike',  6.8],
+  ['walk',  3.5],
+];
+
+const SET_SECONDS = 40; // assumed active seconds per weight/reps set
+
+let latestWeightKg = null; // latest body_weights.weight_kg for the session member
+
+async function fetchLatestWeight() {
+  const { data, error } = await sb.from('body_weights')
+    .select('weight_kg')
+    .eq('member_id', session.member_id)     // member-scoped
+    .order('recorded_on', { ascending: false })
+    .limit(1);
+  if (error) return;                        // silent: calories just don't show
+  latestWeightKg = data?.[0]?.weight_kg ?? null;
+}
+
+function metFor(exercise) {
+  const name = String(exercise?.name || '').toLowerCase();
+  for (const [kw, met] of MET_KEYWORDS) if (name.includes(kw)) return met;
+  return MET_BY_TYPE[exercise?.measure_type] ?? null;
+}
+
+// Whole-number kcal for one workout_logs row, or null when nothing should show.
+function logCalories(log) {
+  if (latestWeightKg == null) return null;
+  const ex = log.exercises || {};
+  const met = metFor(ex);
+  if (met == null) return null;
+  const sets = Array.isArray(log.sets) ? log.sets : [];
+  let secs;
+  if (ex.measure_type === 'time') {
+    secs = sets.map(setSecs).filter((v) => v != null).reduce((a, b) => a + b, 0);
+  } else {
+    secs = sets.length * SET_SECONDS;
+  }
+  if (secs <= 0) return null;
+  const kcal = Math.round(met * latestWeightKg * (secs / 3600));
+  return kcal > 0 ? kcal : null;            // never render "~0 kcal"
 }
 
 let toastTimer = null;
@@ -1088,7 +1149,9 @@ async function loadTodayLogs() {
 
 function renderTodayList() {
   const list = $('#today-list');
+  const totalEl = $('#today-total');
   if (todayLogs.length === 0) {
+    totalEl.classList.add('hidden');
     const isToday = selectedDate === localISO();
     list.innerHTML = `
       <div class="empty-state">
@@ -1099,14 +1162,18 @@ function renderTodayList() {
     return;
   }
   list.innerHTML = '';
+  let dayTotal = 0;
   todayLogs.forEach((log) => {
     const ex = log.exercises || {};
+    const kcal = logCalories(log);
+    if (kcal != null) dayTotal += kcal;
     const card = document.createElement('div');
     card.className = 'wo-card';
     card.innerHTML = `
       <div class="wo-main">
         <div class="wo-name">${escapeHtml(ex.name || 'Unknown exercise')}</div>
         <div class="wo-sets">${escapeHtml(formatSets(log.sets, ex.measure_type))}</div>
+        ${kcal != null ? `<div class="wo-kcal">~${kcal} kcal</div>` : ''}
         ${ex.muscle_group ? `<div class="wo-muscle">${escapeHtml(ex.muscle_group)}</div>` : ''}
       </div>
       <button class="wo-del" aria-label="Delete">
@@ -1130,6 +1197,8 @@ function renderTodayList() {
     });
     list.appendChild(card);
   });
+  totalEl.textContent = `Est. total: ~${dayTotal} kcal`;
+  totalEl.classList.toggle('hidden', dayTotal <= 0);
 }
 
 async function confirmDelete(log) {
@@ -1509,15 +1578,18 @@ function renderHistoryList() {
     const card = document.createElement('div');
     card.className = 'day-card';
     card.id = `day-${date}`;
-    card.innerHTML = `<div class="day-head">${escapeHtml(prettyHistoryDate(date))}</div>`;
+    const dayTotal = logs.reduce((sum, log) => sum + (logCalories(log) ?? 0), 0);
+    card.innerHTML = `<div class="day-head">${escapeHtml(prettyHistoryDate(date))}${dayTotal > 0 ? `<span class="day-kcal">~${dayTotal} kcal</span>` : ''}</div>`;
     logs.forEach((log) => {
       const ex = log.exercises || {};
+      const kcal = logCalories(log);
       const row = document.createElement('button');
       row.className = 'hx-row';
       row.innerHTML = `
         <div class="wo-main">
           <div class="wo-name">${escapeHtml(ex.name || 'Unknown exercise')}</div>
           <div class="wo-sets">${escapeHtml(formatSets(log.sets, ex.measure_type))}</div>
+          ${kcal != null ? `<div class="wo-kcal">~${kcal} kcal</div>` : ''}
         </div>
         ${ex.muscle_group ? `<span class="wo-muscle">${escapeHtml(ex.muscle_group)}</span>` : ''}`;
       row.addEventListener('click', () => openChart(ex));
@@ -1675,6 +1747,7 @@ async function loadProfile() {
   }
   profileData = pRes.data;
   weightRows = wRes.data || [];
+  latestWeightKg = weightRows[0]?.weight_kg ?? null;
   renderProfile();
 }
 
@@ -1881,6 +1954,10 @@ function enterApp() {
   renderDateHeader();
   switchTab('today');
   loadTodayLogs();
+  latestWeightKg = null;                    // reset per login
+  fetchLatestWeight().then(() => {
+    if (latestWeightKg != null && todayLogs.length > 0) renderTodayList();
+  });
   maybeShowOnboarding();
 }
 
