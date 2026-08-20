@@ -366,7 +366,77 @@ input::placeholder{ color: var(--text-dim); }
   border-radius: 12px;
   padding: 13px 30px;
 }
-.profile-who{ color: var(--text); font-weight: 600; }
+/* ============================================================
+   PROFILE
+   ============================================================ */
+.pf-banner{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.pf-banner-btn{
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.pf-card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.pf-card-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.pf-title{ font-weight: 800; font-size: 15px; }
+.pf-sec-title{ font-weight: 800; font-size: 15px; margin-bottom: 10px; }
+.pf-edit{ color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 8px; }
+.pf-grid{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pf-label{ font-size: 12px; color: var(--text-dim); }
+.pf-value{ font-size: 18px; font-weight: 700; }
+.pf-sub{ font-size: 11px; color: var(--text-dim); }
+.bmi-value{ font-size: 26px; font-weight: 800; }
+.bmi-cat{ color: var(--accent); font-weight: 600; font-size: 14px; margin-left: 8px; }
+.bmi-note{ color: var(--text-dim); font-size: 13px; margin-top: 6px; }
+.bw-row{ display: flex; gap: 10px; margin-bottom: 14px; }
+.bw-row input{ flex: 1; text-align: center; font-weight: 600; }
+.bw-btn{
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 0 16px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.bw-btn:disabled{ opacity: .5; }
+.pf-chart svg{ width: 100%; height: auto; display: block; }
+#view-profile .logout-btn{ display: block; margin: 26px auto 0; }
+.skip-btn{
+  width: 100%;
+  margin-top: 10px;
+  padding: 13px 0;
+  color: var(--text-dim);
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
 
 /* ============================================================
    BOTTOM NAV
@@ -632,13 +702,12 @@ input::placeholder{ color: var(--text-dim); }
 
     <!-- PROFILE -->
     <div id="view-profile" class="tab-view hidden">
-      <div class="soon">
-        <div class="icon">💪</div>
-        <h2>Profile</h2>
-        <p>Signed in as <span class="profile-who" id="profile-who"></span></p>
-        <p>Stats, body weight and photos are coming soon.</p>
-        <button class="logout-btn" id="logout-btn">Log out</button>
+      <div id="profile-banner" class="pf-banner hidden">
+        <span>Profile incomplete — add your stats to unlock BMI (and calorie estimates later).</span>
+        <button class="pf-banner-btn" id="banner-add-btn">Add stats</button>
       </div>
+      <div id="profile-body"></div>
+      <button class="logout-btn" id="logout-btn">Log out</button>
     </div>
 
     <!-- NAV -->
@@ -704,6 +773,21 @@ input::placeholder{ color: var(--text-dim); }
       <div class="sheet-title"><span id="chart-title"></span> <button class="sheet-close" data-close>&times;</button></div>
       <div class="chart-sub" id="chart-sub"></div>
       <div id="chart-box"></div>
+    </div>
+
+    <!-- step 5: profile onboarding / edit stats -->
+    <div id="sheet-onboard" class="hidden">
+      <div class="sheet-title"><span id="onboard-title">Set up your profile</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Height (cm)</div>
+      <input type="number" inputmode="decimal" min="100" max="250" step="0.1" id="ob-height" placeholder="e.g. 172" autocomplete="off">
+      <div class="form-label">Date of birth</div>
+      <input type="date" id="ob-dob">
+      <div class="form-label">Gender</div>
+      <div class="chips" id="gender-chips"></div>
+      <div class="form-label">Current weight (kg) — optional</div>
+      <input type="number" inputmode="decimal" min="20" max="300" step="0.1" id="ob-weight" placeholder="e.g. 74.5" autocomplete="off">
+      <button class="primary-btn" id="ob-save-btn">Save</button>
+      <button class="skip-btn" id="ob-skip-btn">Skip for now</button>
     </div>
   </div>
 
@@ -1060,7 +1144,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -1070,6 +1154,10 @@ function openSheet(step) {
 }
 
 function closeSheet() {
+  // dismissing the onboarding prompt any way (skip, ×, backdrop) counts as skip
+  if (sheetStep === 'onboard' && onboardMode === 'onboard') {
+    localStorage.setItem(onboardDoneKey(), '1');
+  }
   sheetStep = null;
   editingLog = null;
   currentExercise = null;
@@ -1535,6 +1623,245 @@ function buildChartSVG(points, measureType) {
 }
 
 /* ============================================================
+   PROFILE
+   ============================================================ */
+let profileData = null;   // { height_cm, gender, date_of_birth } for the session member
+let weightRows = [];      // body_weights rows, newest recorded_on first
+let profileSeq = 0;
+let onboardMode = 'onboard'; // 'onboard' (skippable prompt) | 'edit' (from stats card)
+let obGender = null;
+const GENDERS = ['male', 'female', 'other'];
+
+const onboardDoneKey = () => `repmate_onboard_done_${session.member_id}`;
+
+function statsIncomplete(p) {
+  return !p || p.height_cm == null || p.date_of_birth == null || p.gender == null;
+}
+
+function ageFromDob(iso) {
+  const dob = new Date(iso + 'T12:00:00');
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
+  return age;
+}
+
+function capitalize(s) {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+async function loadProfile() {
+  const seq = ++profileSeq;
+  const body = $('#profile-body');
+  $('#profile-banner').classList.add('hidden');
+  body.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading profile…</div>';
+  const [pRes, wRes] = await Promise.all([
+    sb.from('members')
+      .select('height_cm, gender, date_of_birth')
+      .eq('id', session.member_id)
+      .single(),
+    sb.from('body_weights')
+      .select('id, recorded_on, weight_kg')
+      .eq('member_id', session.member_id)
+      .order('recorded_on', { ascending: false }),
+  ]);
+  if (seq !== profileSeq) return; // stale response
+  const error = pRes.error || wRes.error;
+  if (error) {
+    body.innerHTML = `<div class="state-msg">Couldn't load profile.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="profile-retry">Retry</button></div>`;
+    $('#profile-retry').addEventListener('click', loadProfile);
+    return;
+  }
+  profileData = pRes.data;
+  weightRows = wRes.data || [];
+  renderProfile();
+}
+
+function renderProfile() {
+  const p = profileData || {};
+  const latest = weightRows[0] || null;
+  $('#profile-banner').classList.toggle('hidden', !statsIncomplete(p));
+
+  const stat = (label, value, sub = '') => `
+    <div class="pf-stat">
+      <div class="pf-label">${escapeHtml(label)}</div>
+      <div class="pf-value">${escapeHtml(value)}</div>
+      ${sub ? `<div class="pf-sub">${escapeHtml(sub)}</div>` : ''}
+    </div>`;
+
+  let bmiHtml;
+  if (p.height_cm != null && latest) {
+    const bmi = Math.round((latest.weight_kg / ((p.height_cm / 100) ** 2)) * 10) / 10;
+    const cat = bmi < 18.5 ? 'Underweight' : bmi < 25 ? 'Normal' : bmi < 30 ? 'Overweight' : 'Obese';
+    bmiHtml = `<span class="bmi-value">BMI ${escapeHtml(bmi)}</span><span class="bmi-cat">${escapeHtml(cat)}</span>
+      <div class="bmi-note">BMI is a rough guide based only on height and weight — not a medical assessment.</div>`;
+  } else {
+    bmiHtml = '<div class="bmi-note">Add your height and weight to see BMI.</div>';
+  }
+
+  // one row per day is guaranteed by the upsert, so no per-day dedup needed
+  const points = [...weightRows].reverse()
+    .map((r) => ({ date: r.recorded_on, value: r.weight_kg }));
+  const chartHtml = points.length
+    ? buildChartSVG(points, 'weight')
+    : '<div class="empty-state">No weight entries yet — log your first above.</div>';
+
+  $('#profile-body').innerHTML = `
+    <div class="pf-card">
+      <div class="pf-card-head">
+        <span class="pf-title">${escapeHtml(session.name)}</span>
+        <button class="pf-edit" id="pf-edit-btn">Edit</button>
+      </div>
+      <div class="pf-grid">
+        ${stat('Age', p.date_of_birth != null ? String(ageFromDob(p.date_of_birth)) : '—')}
+        ${stat('Height', p.height_cm != null ? `${p.height_cm} cm` : '—')}
+        ${stat('Weight', latest ? `${latest.weight_kg} kg` : '—', latest ? `logged ${prettyDate(latest.recorded_on)}` : '')}
+        ${stat('Gender', p.gender ? capitalize(p.gender) : '—')}
+      </div>
+    </div>
+    <div class="pf-card">${bmiHtml}</div>
+    <div class="pf-card">
+      <div class="pf-sec-title">Body weight</div>
+      <div class="bw-row">
+        <input type="number" inputmode="decimal" min="20" max="300" step="0.1" id="bw-input" placeholder="kg">
+        <button class="bw-btn" id="bw-log-btn">Log today's weight</button>
+      </div>
+      <div class="pf-chart">${chartHtml}</div>
+    </div>`;
+  $('#pf-edit-btn').addEventListener('click', () => openOnboard('edit'));
+  $('#bw-log-btn').addEventListener('click', logWeight);
+}
+
+/* ---------- body-weight logging ---------- */
+// One row per member per day: update today's row if it exists, else insert.
+async function upsertTodayWeight(kg) {
+  const today = localISO();
+  const { data, error } = await sb.from('body_weights')
+    .select('id')
+    .eq('member_id', session.member_id)
+    .eq('recorded_on', today)
+    .limit(1);
+  if (error) { sbError('Weight save failed', error); return false; }
+  const existingId = data?.[0]?.id ?? null;
+  let err;
+  if (existingId) {
+    ({ error: err } = await sb.from('body_weights')
+      .update({ weight_kg: kg }).eq('id', existingId));
+  } else {
+    ({ error: err } = await sb.from('body_weights').insert({
+      member_id: session.member_id,
+      recorded_on: today,
+      weight_kg: kg,
+    }));
+  }
+  if (err) { sbError('Weight save failed', err); return false; }
+  return true;
+}
+
+async function logWeight() {
+  const kg = parseFloat($('#bw-input').value);
+  if (!Number.isFinite(kg) || kg < 20 || kg > 300) {
+    toast('Enter a weight between 20 and 300 kg', 'err');
+    return;
+  }
+  const btn = $('#bw-log-btn');
+  btn.disabled = true;
+  try {
+    if (!await upsertTodayWeight(kg)) return;
+    toast('Weight logged');
+    loadProfile();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------- onboarding / edit stats sheet ---------- */
+function openOnboard(mode) {
+  onboardMode = mode;
+  const p = profileData || {};
+  $('#onboard-title').textContent = mode === 'edit' ? 'Edit stats' : 'Set up your profile';
+  $('#ob-height').value = p.height_cm ?? '';
+  $('#ob-dob').value = p.date_of_birth ?? '';
+  $('#ob-weight').value = '';
+  obGender = p.gender ?? null;
+  buildGenderChips();
+  $('#ob-skip-btn').classList.toggle('hidden', mode === 'edit');
+  openSheet('onboard');
+}
+
+function buildGenderChips() {
+  const box = $('#gender-chips');
+  box.innerHTML = '';
+  GENDERS.forEach((g) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (obGender === g ? ' sel' : '');
+    c.textContent = capitalize(g);
+    c.addEventListener('click', () => {
+      obGender = (obGender === g) ? null : g;
+      buildGenderChips();
+    });
+    box.appendChild(c);
+  });
+}
+
+async function saveOnboard() {
+  // dynamic update object: only fields the user filled — never null writes,
+  // so Edit mode can't wipe existing values
+  const upd = {};
+  const hRaw = $('#ob-height').value.trim();
+  if (hRaw !== '') {
+    const h = parseFloat(hRaw);
+    if (!Number.isFinite(h) || h < 100 || h > 250) { toast('Height must be 100–250 cm', 'err'); return; }
+    upd.height_cm = h;
+  }
+  const dob = $('#ob-dob').value;
+  if (dob) {
+    const age = ageFromDob(dob);
+    if (age < 10 || age > 100) { toast('Date of birth must give an age of 10–100', 'err'); return; }
+    upd.date_of_birth = dob;
+  }
+  if (obGender != null) upd.gender = obGender;
+
+  let kg = null;
+  const wRaw = $('#ob-weight').value.trim();
+  if (wRaw !== '') {
+    kg = parseFloat(wRaw);
+    if (!Number.isFinite(kg) || kg < 20 || kg > 300) { toast('Weight must be 20–300 kg', 'err'); return; }
+  }
+
+  const btn = $('#ob-save-btn');
+  btn.disabled = true;
+  try {
+    if (Object.keys(upd).length > 0) {
+      const { error } = await sb.from('members').update(upd).eq('id', session.member_id);
+      if (error) { sbError('Save failed', error); return; }
+      profileData = { ...(profileData || {}), ...upd };
+    }
+    if (kg != null && !await upsertTodayWeight(kg)) return;
+    localStorage.setItem(onboardDoneKey(), '1');
+    toast('Profile saved');
+    closeSheet();
+    if (!$('#view-profile').classList.contains('hidden')) loadProfile();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// After login: show the onboarding prompt at most once per device, only when
+// stats are incomplete. Fire-and-forget — never blocks workout logging.
+async function maybeShowOnboarding() {
+  if (localStorage.getItem(onboardDoneKey())) return;
+  const { data, error } = await sb.from('members')
+    .select('height_cm, gender, date_of_birth')
+    .eq('id', session.member_id)
+    .single();
+  if (error) return; // never block or nag on a failed check
+  profileData = data;
+  if (statsIncomplete(data)) openOnboard('onboard');
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 function switchTab(tab) {
@@ -1543,17 +1870,18 @@ function switchTab(tab) {
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
+  if (tab === 'profile') loadProfile();
 }
 
 function enterApp() {
   $('#screen-login').classList.add('hidden');
   $('#screen-main').classList.remove('hidden');
   $('#head-avatar').textContent = initials(session.name);
-  $('#profile-who').textContent = session.name;
   selectedDate = localISO();
   renderDateHeader();
   switchTab('today');
   loadTodayLogs();
+  maybeShowOnboarding();
 }
 
 /* ---------- wire up events ---------- */
@@ -1582,6 +1910,9 @@ function init() {
   });
 
   $('#add-btn').addEventListener('click', openSearch);
+  $('#banner-add-btn').addEventListener('click', () => openOnboard('onboard'));
+  $('#ob-save-btn').addEventListener('click', saveOnboard);
+  $('#ob-skip-btn').addEventListener('click', closeSheet);
   $('#ex-search').addEventListener('input', onSearchInput);
   $('#create-ex-btn').addEventListener('click', createExercise);
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
