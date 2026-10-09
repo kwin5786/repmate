@@ -623,6 +623,20 @@ input::placeholder{ color: var(--text-dim); }
 #toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
 #toast.ok{ border-color: var(--accent-dim); color: var(--accent); }
 #toast.err{ border-color: var(--danger); color: var(--danger); }
+
+/* ============================================================
+   FRIENDS / COMPARE
+   ============================================================ */
+.cmp-week{ font-size:12px; font-weight:700; color:var(--text-dim); margin:12px 0 4px; }
+.cmp-row{ display:flex; align-items:center; gap:10px; padding:5px 0; }
+.cmp-name{ width:84px; flex-shrink:0; font-size:13px; font-weight:600;
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cmp-track{ flex:1; height:10px; border-radius:999px;
+            background:var(--surface-2); border:1px solid var(--border); overflow:hidden; }
+.cmp-fill{ display:block; height:100%; background:var(--accent); border-radius:999px; }
+.cmp-days{ width:20px; flex-shrink:0; text-align:right; font-size:12px; color:var(--text-dim); }
+.cmp-hint{ color:var(--text-dim); font-size:13px; padding:8px 0 2px; }
+.fr-days{ color:var(--accent); font-weight:700; font-size:15px; flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -672,13 +686,14 @@ input::placeholder{ color: var(--text-dim); }
       <div id="history-list"></div>
     </div>
 
-    <!-- GROUP -->
-    <div id="view-group" class="tab-view hidden">
-      <div class="soon">
-        <div class="icon">👥</div>
-        <h2>Group</h2>
-        <p>See what your gym buddies lifted — coming soon.</p>
+    <!-- FRIENDS -->
+    <div id="view-friends" class="tab-view hidden">
+      <div class="pf-card" id="friends-compare-card">
+        <div class="pf-sec-title">Compare — pick up to 4</div>
+        <div class="chips" id="compare-chips"></div>
+        <div id="compare-bars"></div>
       </div>
+      <div class="pf-card" id="friends-list"></div>
     </div>
 
     <!-- PROFILE -->
@@ -694,7 +709,7 @@ input::placeholder{ color: var(--text-dim); }
     <!-- ADMIN (reachable only from Profile, admins only) -->
     <div id="view-admin" class="tab-view hidden">
       <button class="adm-back" id="admin-back">&larr; Back to profile</button>
-      <button class="adm-add" id="admin-add-btn">+ Add member</button>
+      <button class="adm-add" id="admin-add-btn">+ Add friend</button>
       <div class="pf-card" id="admin-list"></div>
     </div>
 
@@ -708,9 +723,9 @@ input::placeholder{ color: var(--text-dim); }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
         History
       </button>
-      <button class="nav-btn" data-tab="group">
+      <button class="nav-btn" data-tab="friends">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.7c2.6.4 4.5 2.1 4.5 4.8"/></svg>
-        Group
+        Friends
       </button>
       <button class="nav-btn" data-tab="profile">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c0-4 3.5-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/></svg>
@@ -780,12 +795,12 @@ input::placeholder{ color: var(--text-dim); }
 
     <!-- step 6: admin — add member -->
     <div id="sheet-admin-add" class="hidden">
-      <div class="sheet-title">Add member <button class="sheet-close" data-close>&times;</button></div>
+      <div class="sheet-title">Add friend <button class="sheet-close" data-close>&times;</button></div>
       <div class="form-label">Name</div>
       <input type="text" id="adm-name" maxlength="40" autocomplete="off">
       <div class="form-label">Initial PIN (4 digits)</div>
       <input type="password" inputmode="numeric" maxlength="4" id="adm-pin" autocomplete="off">
-      <button class="primary-btn" id="adm-add-save">Add member</button>
+      <button class="primary-btn" id="adm-add-save">Add friend</button>
     </div>
 
     <!-- step 7: admin — reset PIN -->
@@ -1633,6 +1648,148 @@ function buildChartSVG(points, measureType) {
 }
 
 /* ============================================================
+   FRIENDS (read-only: weekly summaries + compare)
+   ============================================================ */
+let friendsMembers = [];     // members rows: { id, name }
+let friendStats = new Map(); // member_id -> { name, weekDays:[Set x5], exThisWeek:Set }
+let compareSel = new Set();  // selected member ids, max 4
+let friendsSeq = 0;
+
+// Local YYYY-MM-DD of the Monday `weeksBack` weeks before the current week's
+// Monday. getDay() Sunday=0 maps to a 6-day offset so Sunday belongs to the
+// week begun the previous Monday.
+function mondayISO(weeksBack) {
+  const now = new Date();
+  const dow = now.getDay();
+  const offset = dow === 0 ? 6 : dow - 1;
+  return localISO(new Date(now.getFullYear(), now.getMonth(),
+    now.getDate() - offset - weeksBack * 7));
+}
+
+async function loadFriends() {
+  const seq = ++friendsSeq;
+  const list = $('#friends-list');
+  list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading friends…</div>';
+  $('#compare-bars').innerHTML = '';
+  const [mRes, lRes] = await Promise.all([
+    sb.from('members')
+      .select('id, name')
+      .order('name'),
+    sb.from('workout_logs')
+      .select('member_id, log_date, exercise_id')
+      .gte('log_date', mondayISO(4)),
+  ]);
+  if (seq !== friendsSeq) return; // stale response
+  const error = mRes.error || lRes.error;
+  if (error) {
+    list.innerHTML = `<div class="state-msg">Couldn't load friends.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="friends-retry">Retry</button></div>`;
+    $('#friends-retry').addEventListener('click', loadFriends);
+    return;
+  }
+  friendsMembers = mRes.data || [];
+  computeFriendStats(friendsMembers, lRes.data || []);
+  const ids = new Set(friendsMembers.map((m) => m.id));
+  compareSel = new Set([...compareSel].filter((id) => ids.has(id)));
+  renderFriendsList();
+  renderCompare();
+}
+
+// Buckets each log into one of 5 Mon–Sun weeks (index 0 = oldest, 4 = current
+// partial week) by string comparison on YYYY-MM-DD boundaries.
+function computeFriendStats(members, logs) {
+  const mondays = [mondayISO(4), mondayISO(3), mondayISO(2), mondayISO(1), mondayISO(0)];
+  friendStats = new Map();
+  members.forEach((m) => friendStats.set(m.id, {
+    name: m.name,
+    weekDays: [new Set(), new Set(), new Set(), new Set(), new Set()],
+    exThisWeek: new Set(),
+  }));
+  logs.forEach((log) => {
+    const st = friendStats.get(log.member_id);
+    if (!st || log.log_date < mondays[0]) return;
+    let idx = 0;
+    for (let i = 4; i >= 0; i--) {
+      if (log.log_date >= mondays[i]) { idx = i; break; }
+    }
+    st.weekDays[idx].add(log.log_date);
+    if (idx === 4) st.exThisWeek.add(log.exercise_id);
+  });
+}
+
+function renderFriendsList() {
+  const list = $('#friends-list');
+  if (friendsMembers.length === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="big">👥</div>
+        No friends yet.
+      </div>`;
+    return;
+  }
+  const rows = friendsMembers
+    .map((m) => ({ ...m, ...friendStats.get(m.id) }))
+    .sort((a, b) =>
+      b.weekDays[4].size - a.weekDays[4].size || a.name.localeCompare(b.name));
+  list.innerHTML = '';
+  rows.forEach((m) => {
+    const days = m.weekDays[4].size;
+    const exs = m.exThisWeek.size;
+    const row = document.createElement('div');
+    row.className = 'adm-row';
+    row.innerHTML = `
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-tag">${days} day${days === 1 ? '' : 's'} this week · ${exs} exercise${exs === 1 ? '' : 's'}</div>
+      </div>
+      <span class="fr-days">${days}</span>`;
+    list.appendChild(row);
+  });
+}
+
+function toggleCompare(memberId) {
+  if (compareSel.has(memberId)) {
+    compareSel.delete(memberId);
+  } else {
+    if (compareSel.size === 4) { toast('Pick up to 4 friends', 'err'); return; }
+    compareSel.add(memberId);
+  }
+  renderCompare();
+}
+
+function renderCompare() {
+  const chips = $('#compare-chips');
+  chips.innerHTML = '';
+  friendsMembers.forEach((m) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (compareSel.has(m.id) ? ' sel' : '');
+    c.textContent = m.name;
+    c.addEventListener('click', () => toggleCompare(m.id));
+    chips.appendChild(c);
+  });
+  const bars = $('#compare-bars');
+  if (compareSel.size === 0) {
+    bars.innerHTML = '<div class="cmp-hint">Pick friends above to compare.</div>';
+    return;
+  }
+  const sel = friendsMembers.filter((m) => compareSel.has(m.id));
+  let html = '';
+  for (let w = 0; w < 5; w++) {
+    html += `<div class="cmp-week">Week of ${escapeHtml(prettyDate(mondayISO(4 - w)))}</div>`;
+    sel.forEach((m) => {
+      const days = friendStats.get(m.id).weekDays[w].size;
+      const pct = Math.round((days / 7) * 1000) / 10;
+      html += `
+      <div class="cmp-row">
+        <span class="cmp-name">${escapeHtml(m.name)}</span>
+        <span class="cmp-track"><span class="cmp-fill" style="width:${pct}%"></span></span>
+        <span class="cmp-days">${days}</span>
+      </div>`;
+    });
+  }
+  bars.innerHTML = html;
+}
+
+/* ============================================================
    PROFILE
    ============================================================ */
 let profileData = null;   // { height_cm, gender, date_of_birth } for the session member
@@ -1722,7 +1879,7 @@ function renderProfile() {
     ${session.is_admin ? `
     <button class="pf-card adm-entry" id="pf-admin-btn">
       <span class="pf-title">Admin</span>
-      <span class="pf-edit">Manage members &rsaquo;</span>
+      <span class="pf-edit">Manage friends &rsaquo;</span>
     </button>` : ''}
     <div class="pf-card">
       <div class="pf-card-head">
@@ -1894,13 +2051,13 @@ async function loadAdmin() {
   if (!session?.is_admin) { toast('Admins only', 'err'); return; }
   const seq = ++adminSeq;
   const box = $('#admin-list');
-  box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading members…</div>';
+  box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading friends…</div>';
   const { data, error } = await sb.from('members')
     .select('id, name, is_admin, created_at')
     .order('name');
   if (seq !== adminSeq) return; // stale response
   if (error) {
-    box.innerHTML = `<div class="state-msg">Couldn't load members.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="admin-retry">Retry</button></div>`;
+    box.innerHTML = `<div class="state-msg">Couldn't load friends.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="admin-retry">Retry</button></div>`;
     $('#admin-retry').addEventListener('click', loadAdmin);
     return;
   }
@@ -1947,7 +2104,7 @@ async function saveNewMember() {
     const { data: dup, error: dupErr } = await sb.from('members')
       .select('id').ilike('name', name).limit(1);
     if (dupErr) { sbError('Add failed', dupErr); return; }
-    if (dup && dup.length > 0) { toast(`A member named "${name}" already exists`, 'err'); return; }
+    if (dup && dup.length > 0) { toast(`A friend named "${name}" already exists`, 'err'); return; }
     const { error } = await sb.from('members').insert({
       id: crypto.randomUUID(),
       name,
@@ -1998,10 +2155,11 @@ async function saveNewPin() {
    ============================================================ */
 function switchTab(tab) {
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ['today', 'history', 'group', 'profile', 'admin'].forEach((t) =>
+  ['today', 'history', 'friends', 'profile', 'admin'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
+  if (tab === 'friends') loadFriends();
   if (tab === 'profile') loadProfile();
   if (tab === 'admin') loadAdmin();
 }
