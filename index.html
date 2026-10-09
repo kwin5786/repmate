@@ -95,22 +95,10 @@ input::placeholder{ color: var(--text-dim); }
   font-size: 15px;
 }
 
-/* member list */
-#member-list{ width: 100%; display: flex; flex-direction: column; gap: 12px; }
-.member-card{
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  min-height: 68px;
-  text-align: left;
-  transition: transform .08s ease;
-}
-.member-card:active{ transform: scale(.98); background: var(--surface-2); }
+/* login form */
+#login-form{ width: 100%; max-width: 360px; }
+
+/* avatar (main-screen header) */
 .avatar{
   width: 44px;
   height: 44px;
@@ -127,51 +115,9 @@ input::placeholder{ color: var(--text-dim); }
   overflow: hidden;
 }
 .avatar img{ width: 100%; height: 100%; object-fit: cover; }
-.member-name{ font-weight: 600; font-size: 17px; }
-.member-tag{ font-size: 12px; color: var(--text-dim); }
-
-/* pin pad */
-#pin-view{ width: 100%; display: flex; flex-direction: column; align-items: center; }
-.pin-back{
-  align-self: flex-start;
-  color: var(--text-dim);
-  font-size: 15px;
-  padding: 8px 4px;
-  margin-bottom: 8px;
-}
-.pin-who{ font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+/* login hint / error line */
 .pin-hint{ color: var(--text-dim); font-size: 14px; margin-bottom: 22px; min-height: 20px; }
 .pin-hint.error{ color: var(--danger); }
-.pin-dots{ display: flex; gap: 16px; margin-bottom: 30px; }
-.pin-dot{
-  width: 16px; height: 16px;
-  border-radius: 50%;
-  border: 2px solid var(--text-dim);
-}
-.pin-dot.filled{ background: var(--accent); border-color: var(--accent); }
-@keyframes shake{
-  0%,100%{ transform: translateX(0); }
-  20%{ transform: translateX(-10px); }
-  40%{ transform: translateX(10px); }
-  60%{ transform: translateX(-7px); }
-  80%{ transform: translateX(7px); }
-}
-.pin-dots.shake{ animation: shake .45s ease; }
-.pin-grid{
-  display: grid;
-  grid-template-columns: repeat(3, 76px);
-  gap: 14px;
-}
-.pin-key{
-  width: 76px; height: 76px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 26px;
-  font-weight: 600;
-}
-.pin-key:active{ background: var(--surface-2); transform: scale(.95); }
-.pin-key.ghost{ background: none; border: none; font-size: 20px; color: var(--text-dim); }
 
 /* login states */
 .state-msg{
@@ -467,6 +413,8 @@ input::placeholder{ color: var(--text-dim); }
   border-radius: 14px;
   padding: 14px 0;
 }
+.member-name{ font-weight: 600; font-size: 17px; }
+.member-tag{ font-size: 12px; color: var(--text-dim); }
 .adm-row{ display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 0; }
 .adm-row + .adm-row{ border-top: 1px solid var(--border); }
 .adm-reset{ color: var(--accent); font-size: 13px; font-weight: 600; padding: 8px 10px; flex-shrink: 0; }
@@ -686,18 +634,17 @@ input::placeholder{ color: var(--text-dim); }
       <img id="logo-img" src="logo.png" alt="RepMate logo">
     </div>
     <div class="brand">Rep<span>Mate</span></div>
-    <div class="login-sub">Who's training?</div>
+    <div class="login-sub">Log in to train</div>
 
-    <div id="member-list"></div>
-
-    <div id="pin-view" class="hidden">
-      <button class="pin-back" id="pin-back">&larr; All members</button>
-      <div class="pin-who" id="pin-who"></div>
-      <div class="pin-hint" id="pin-hint">Enter your 4-digit PIN</div>
-      <div class="pin-dots" id="pin-dots">
-        <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
-      </div>
-      <div class="pin-grid" id="pin-grid"></div>
+    <div id="login-form">
+      <div class="form-label">Name</div>
+      <input type="text" id="login-name" autocomplete="username"
+             autocapitalize="words" placeholder="Your name">
+      <div class="form-label">PIN</div>
+      <input type="password" inputmode="numeric" maxlength="4"
+             id="login-pin" autocomplete="current-password" placeholder="4-digit PIN">
+      <div class="pin-hint" id="login-error"></div>
+      <button class="primary-btn" id="login-btn">Log in</button>
     </div>
   </div>
 
@@ -1015,105 +962,56 @@ function loadSession() {
 
 function showLogin() {
   session = null;
+  pinMember = null;
   $('#screen-main').classList.add('hidden');
   $('#screen-login').classList.remove('hidden');
-  showMemberList();
-  fetchMembers();
+  $('#login-name').value = '';
+  $('#login-pin').value = '';
+  setLoginError('');
+  $('#login-name').focus();
 }
 
-function showMemberList() {
-  pinMember = null;
-  $('#pin-view').classList.add('hidden');
-  $('#member-list').classList.remove('hidden');
-}
-
-async function fetchMembers() {
-  const list = $('#member-list');
-  list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading members…</div>';
-  const { data, error } = await sb.from('members')
-    .select('id, name, is_admin, avatar_url')
-    .order('name');
-  if (error) {
-    list.innerHTML = `<div class="state-msg">Couldn't load members.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="members-retry">Retry</button></div>`;
-    $('#members-retry').addEventListener('click', fetchMembers);
-    return;
-  }
-  if (!data || data.length === 0) {
-    list.innerHTML = '<div class="state-msg">No members yet. Add one in Supabase to get started.</div>';
-    return;
-  }
-  list.innerHTML = '';
-  data.forEach((m) => {
-    const btn = document.createElement('button');
-    btn.className = 'member-card';
-    const av = m.avatar_url
-      ? `<img src="${escapeHtml(m.avatar_url)}" alt="" onerror="this.remove()">`
-      : escapeHtml(initials(m.name));
-    btn.innerHTML = `
-      <div class="avatar">${av}</div>
-      <div>
-        <div class="member-name">${escapeHtml(m.name)}</div>
-        ${m.is_admin ? '<div class="member-tag">Admin</div>' : ''}
-      </div>`;
-    btn.addEventListener('click', () => openPinPad(m));
-    list.appendChild(btn);
-  });
-}
-
-function openPinPad(member) {
-  pinMember = member;
-  pinBuffer = '';
-  pinChecking = false;
-  $('#member-list').classList.add('hidden');
-  $('#pin-view').classList.remove('hidden');
-  $('#pin-who').textContent = member.name;
-  setPinHint('Enter your 4-digit PIN', false);
-  renderPinDots();
-}
-
-function setPinHint(msg, isError) {
-  const el = $('#pin-hint');
+function setLoginError(msg) {
+  const el = $('#login-error');
   el.textContent = msg;
-  el.classList.toggle('error', !!isError);
+  el.classList.toggle('error', !!msg);
 }
 
-function renderPinDots() {
-  $$('#pin-dots .pin-dot').forEach((d, i) => d.classList.toggle('filled', i < pinBuffer.length));
-}
-
-function buildPinGrid() {
-  const grid = $('#pin-grid');
-  const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
-  grid.innerHTML = '';
-  keys.forEach((k) => {
-    const b = document.createElement('button');
-    if (k === '') { b.className = 'pin-key ghost'; b.disabled = true; }
-    else {
-      b.className = 'pin-key' + (k === '⌫' ? ' ghost' : '');
-      b.textContent = k;
-      b.addEventListener('click', () => pinPress(k));
-    }
-    if (k !== '') b.textContent = k;
-    grid.appendChild(b);
-  });
-}
-
-async function pinPress(key) {
+async function submitLogin() {
   if (pinChecking) return;
-  if (key === '⌫') {
-    pinBuffer = pinBuffer.slice(0, -1);
-    renderPinDots();
-    return;
+  const name = $('#login-name').value.trim();
+  const pin = $('#login-pin').value;
+  if (!name) { setLoginError('Enter your name'); return; }
+  if (!/^\d{4}$/.test(pin)) { setLoginError('PIN must be 4 digits'); return; }
+  setLoginError('');
+  pinChecking = true;
+  const btn = $('#login-btn');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    // escape ilike wildcards so a typed % or _ can't match another member
+    const term = name.replace(/[\\%_]/g, '\\$&');
+    const { data, error } = await sb.from('members')
+      .select('id, name, is_admin')
+      .ilike('name', term)
+      .limit(1);
+    if (error) throw error;
+    if (!data || data.length === 0) { setLoginError('Member not found'); return; }
+    pinMember = data[0];
+    pinBuffer = pin;
+    await checkPin();
+  } catch (e) {
+    setLoginError('Couldn\'t verify — check connection and retry.');
+    console.error(e);
+  } finally {
+    pinChecking = false;
+    btn.disabled = false;
+    btn.textContent = 'Log in';
   }
-  if (pinBuffer.length >= 4) return;
-  pinBuffer += key;
-  renderPinDots();
-  if (pinBuffer.length === 4) await checkPin();
 }
 
 async function checkPin() {
   pinChecking = true;
-  setPinHint('Checking…', false);
   try {
     const hash = await sha256Hex(pinBuffer);
     if (hash === pinMember.pin_hash || await fetchAndCompareHash(hash)) {
@@ -1122,11 +1020,11 @@ async function checkPin() {
       enterApp();
       return;
     }
-    wrongPin();
+    setLoginError('Wrong PIN');
+    $('#login-pin').value = '';
+    if (navigator.vibrate) navigator.vibrate(120);
   } catch (e) {
-    setPinHint('Couldn\'t verify PIN — check connection and retry.', true);
-    pinBuffer = '';
-    renderPinDots();
+    setLoginError('Couldn\'t verify PIN — check connection and retry.');
     console.error(e);
   } finally {
     pinChecking = false;
@@ -1143,16 +1041,6 @@ async function fetchAndCompareHash(hash) {
     pinMember.pin_hash = data.pin_hash;
   }
   return hash === pinMember.pin_hash;
-}
-
-function wrongPin() {
-  const dots = $('#pin-dots');
-  dots.classList.remove('shake');
-  void dots.offsetWidth; // restart animation
-  dots.classList.add('shake');
-  setPinHint('Wrong PIN — try again', true);
-  if (navigator.vibrate) navigator.vibrate(120);
-  setTimeout(() => { pinBuffer = ''; renderPinDots(); }, 350);
 }
 
 function logout() {
@@ -2139,8 +2027,8 @@ function init() {
   const logo = $('#logo-img');
   logo.addEventListener('error', () => $('#logo-box').classList.add('no-logo'));
 
-  buildPinGrid();
-  $('#pin-back').addEventListener('click', showMemberList);
+  $('#login-btn').addEventListener('click', submitLogin);
+  $('#login-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
 
   $$('.nav-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   $('#logout-btn').addEventListener('click', logout);
