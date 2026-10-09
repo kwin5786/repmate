@@ -637,6 +637,24 @@ input::placeholder{ color: var(--text-dim); }
 .cmp-days{ width:20px; flex-shrink:0; text-align:right; font-size:12px; color:var(--text-dim); }
 .cmp-hint{ color:var(--text-dim); font-size:13px; padding:8px 0 2px; }
 .fr-days{ color:var(--accent); font-weight:700; font-size:15px; flex-shrink:0; }
+
+/* ============================================================
+   CONFIRM MODAL (standalone; independent of the bottom sheet)
+   ============================================================ */
+#confirm-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:50; }
+#confirm-modal{
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:calc(100% - 48px); max-width:340px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:20px 18px 16px; z-index:51;
+}
+.confirm-title{ font-size:17px; font-weight:800; margin-bottom:8px; }
+.confirm-msg{ font-size:14px; color:var(--text-dim); margin-bottom:18px; }
+.confirm-actions{ display:flex; gap:10px; }
+.confirm-actions button{ flex:1; padding:13px 0; border-radius:12px; font-weight:700; font-size:15px; }
+.confirm-cancel{ background:var(--surface-2); border:1px solid var(--border); color:var(--text); }
+.confirm-ok{ background:var(--accent); color:var(--accent-text); }
+.confirm-ok.danger{ background:var(--danger); color:var(--bg); }
 </style>
 </head>
 <body>
@@ -814,6 +832,17 @@ input::placeholder{ color: var(--text-dim); }
     </div>
   </div>
 
+  <!-- ================= CONFIRM MODAL ================= -->
+  <div id="confirm-backdrop" class="hidden"></div>
+  <div id="confirm-modal" class="hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
+    <div class="confirm-title" id="confirm-title"></div>
+    <div class="confirm-msg" id="confirm-msg"></div>
+    <div class="confirm-actions">
+      <button class="confirm-cancel" id="confirm-cancel">Cancel</button>
+      <button class="confirm-ok" id="confirm-ok"></button>
+    </div>
+  </div>
+
   <div id="toast"></div>
 </div>
 
@@ -956,6 +985,42 @@ function toast(msg, kind = 'ok') {
 function sbError(prefix, error) {
   console.error(prefix, error);
   toast(`${prefix}: ${error?.message || 'Unknown error'}`, 'err');
+}
+
+/* ---------- confirm modal (standalone; never routes through openSheet/closeSheet) ---------- */
+let confirmResolve = null; // non-null while the modal is open (re-entry guard)
+let confirmShownAt = 0;    // settle-suppression window against double-tap
+
+function confirmModal({ title, message, confirmLabel = 'Confirm', danger = false }) {
+  if (confirmResolve) return Promise.resolve(false); // already open: refuse re-entry
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    confirmShownAt = Date.now();
+    $('#confirm-title').textContent = title;
+    $('#confirm-msg').textContent = message;
+    const ok = $('#confirm-ok');
+    ok.textContent = confirmLabel;
+    ok.classList.toggle('danger', !!danger);
+    $('#confirm-backdrop').classList.remove('hidden');
+    $('#confirm-modal').classList.remove('hidden');
+    document.addEventListener('keydown', onConfirmKey);
+    $('#confirm-cancel').focus();
+  });
+}
+
+function settleConfirm(result) {
+  if (!confirmResolve) return;                    // resolve exactly once
+  if (result === true && Date.now() - confirmShownAt < 350) return; // suppress only an accidental CONFIRM
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  document.removeEventListener('keydown', onConfirmKey);
+  $('#confirm-backdrop').classList.add('hidden');
+  $('#confirm-modal').classList.add('hidden');
+  resolve(result);
+}
+
+function onConfirmKey(e) {
+  if (e.key === 'Escape') settleConfirm(false);
 }
 
 /* ============================================================
@@ -1156,7 +1221,7 @@ function renderTodayList() {
 
 async function confirmDelete(log) {
   const name = log.exercises?.name || 'this workout';
-  if (!confirm(`Delete ${name} for ${prettyDate(log.log_date)}?`)) return;
+  if (!(await confirmModal({ title: 'Delete workout?', message: `Delete ${name} for ${prettyDate(log.log_date)}?`, confirmLabel: 'Delete', danger: true }))) return;
   const { error } = await sb.from('workout_logs').delete().eq('id', log.id);
   if (error) { sbError('Delete failed', error); return; }
   toast('Deleted');
@@ -2225,6 +2290,10 @@ function init() {
 
   $('#sheet-backdrop').addEventListener('click', closeSheet);
   $$('[data-close]').forEach((b) => b.addEventListener('click', closeSheet));
+
+  $('#confirm-ok').addEventListener('click', () => settleConfirm(true));
+  $('#confirm-cancel').addEventListener('click', () => settleConfirm(false));
+  $('#confirm-backdrop').addEventListener('click', () => settleConfirm(false));
 
   // boot: auto-login if a session exists
   session = loadSession();
