@@ -532,6 +532,7 @@ input::placeholder{ color: var(--text-dim); }
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+.seg.seg-2{ grid-template-columns: repeat(2, 1fr); }
 .seg button{
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1724,6 +1725,7 @@ function buildChartSVG(points, measureType) {
    ============================================================ */
 let friendsMembers = [];     // members rows: { id, name }
 let friendStats = new Map(); // member_id -> { name, weekDays:[Set x5], exThisWeek:Set }
+let friendWeights = new Map(); // member_id -> newest body_weights row (visible members only)
 let compareSel = new Set();  // selected member ids, max 4
 let friendsSeq = 0;
 
@@ -1745,7 +1747,7 @@ async function loadFriends() {
   $('#compare-bars').innerHTML = '';
   const [mRes, lRes] = await Promise.all([
     sb.from('members')
-      .select('id, name')
+      .select('id, name, height_cm, hide_stats')
       .order('name'),
     sb.from('workout_logs')
       .select('member_id, log_date, exercise_id')
@@ -1760,6 +1762,22 @@ async function loadFriends() {
   }
   friendsMembers = mRes.data || [];
   computeFriendStats(friendsMembers, lRes.data || []);
+  friendWeights = new Map();
+  const visibleIds = friendsMembers.filter((m) => !m.hide_stats).map((m) => m.id);
+  if (visibleIds.length > 0) {
+    // weight errors are non-fatal: the stats line just omits weight
+    const { data: wData, error: wErr } = await sb.from('body_weights')
+      .select('member_id, recorded_on, weight_kg')
+      .in('member_id', visibleIds)
+      .order('recorded_on', { ascending: false });
+    if (seq !== friendsSeq) return; // stale response
+    if (!wErr) {
+      (wData || []).forEach((r) => {
+        const prev = friendWeights.get(r.member_id);
+        if (!prev || r.recorded_on > prev.recorded_on) friendWeights.set(r.member_id, r);
+      });
+    }
+  }
   const ids = new Set(friendsMembers.map((m) => m.id));
   compareSel = new Set([...compareSel].filter((id) => ids.has(id)));
   renderFriendsList();
@@ -1806,12 +1824,21 @@ function renderFriendsList() {
   rows.forEach((m) => {
     const days = m.weekDays[4].size;
     const exs = m.exThisWeek.size;
+    let statsLine = '';
+    if (!m.hide_stats) {
+      const parts = [];
+      if (m.height_cm != null) parts.push(`${m.height_cm} cm`);
+      const w = friendWeights.get(m.id);
+      if (w) parts.push(`${Number(w.weight_kg).toFixed(1)} kg`);
+      if (parts.length > 0) statsLine = `<div class="member-tag">${escapeHtml(parts.join(' · '))}</div>`;
+    }
     const row = document.createElement('div');
     row.className = 'adm-row';
     row.innerHTML = `
       <div>
         <div class="member-name">${escapeHtml(m.name)}</div>
         <div class="member-tag">${days} day${days === 1 ? '' : 's'} this week · ${exs} exercise${exs === 1 ? '' : 's'}</div>
+        ${statsLine}
       </div>
       <span class="fr-days">${days}</span>`;
     list.appendChild(row);
@@ -1897,7 +1924,7 @@ async function loadProfile() {
   body.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading profile…</div>';
   const [pRes, wRes] = await Promise.all([
     sb.from('members')
-      .select('height_cm, gender, date_of_birth')
+      .select('height_cm, gender, date_of_birth, hide_stats')
       .eq('id', session.member_id)
       .single(),
     sb.from('body_weights')
@@ -1964,6 +1991,11 @@ function renderProfile() {
         ${stat('Weight', latest ? `${latest.weight_kg} kg` : '—', latest ? `logged ${prettyDate(latest.recorded_on)}` : '')}
         ${stat('Gender', p.gender ? capitalize(p.gender) : '—')}
       </div>
+      <div class="form-label">Height and weight on Friends tab</div>
+      <div class="seg seg-2" id="hide-stats-seg">
+        <button data-hs="show"${!p.hide_stats ? ' class="sel"' : ''}>Visible</button>
+        <button data-hs="hide"${p.hide_stats ? ' class="sel"' : ''}>Hidden</button>
+      </div>
     </div>
     <div class="pf-card">${bmiHtml}</div>
     <div class="pf-card">
@@ -1976,6 +2008,8 @@ function renderProfile() {
     </div>`;
   $('#pf-edit-btn').addEventListener('click', () => openOnboard('edit'));
   $('#bw-log-btn').addEventListener('click', logWeight);
+  $$('#hide-stats-seg button').forEach((b) =>
+    b.addEventListener('click', () => saveHideStats(b.dataset.hs === 'hide')));
   if (session.is_admin) $('#pf-admin-btn').addEventListener('click', showAdmin);
 }
 
@@ -2020,6 +2054,23 @@ async function logWeight() {
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ---------- hide-stats toggle (immediate single-column write) ---------- */
+async function saveHideStats(hide) {
+  if ((profileData?.hide_stats ?? false) === hide) return; // tap on the already-selected button: no-op
+  $$('#hide-stats-seg button').forEach((b) =>
+    b.classList.toggle('sel', (b.dataset.hs === 'hide') === hide));   // optimistic
+  const { error } = await sb.from('members')
+    .update({ hide_stats: hide }).eq('id', session.member_id);
+  if (error) {
+    const prev = profileData?.hide_stats ?? false;
+    $$('#hide-stats-seg button').forEach((b) =>
+      b.classList.toggle('sel', (b.dataset.hs === 'hide') === prev)); // revert
+    sbError('Save failed', error);
+    return;
+  }
+  profileData = { ...(profileData || {}), hide_stats: hide };
 }
 
 /* ---------- onboarding / edit stats sheet ---------- */
@@ -2099,7 +2150,7 @@ async function saveOnboard() {
 async function maybeShowOnboarding() {
   if (localStorage.getItem(onboardDoneKey())) return;
   const { data, error } = await sb.from('members')
-    .select('height_cm, gender, date_of_birth')
+    .select('height_cm, gender, date_of_birth, hide_stats')
     .eq('id', session.member_id)
     .single();
   if (error) return; // never block or nag on a failed check
