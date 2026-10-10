@@ -424,6 +424,9 @@ input::placeholder{ color: var(--text-dim); }
 .adm-row{ display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 0; }
 .adm-row + .adm-row{ border-top: 1px solid var(--border); }
 .adm-reset{ color: var(--accent); font-size: 13px; font-weight: 600; padding: 8px 10px; flex-shrink: 0; }
+.adm-acts{ display: flex; gap: 2px; flex-shrink: 0; }
+.adm-reset.danger{ color: var(--danger); }
+#ex-merge-list{ display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 
 /* ============================================================
    BOTTOM NAV
@@ -739,6 +742,12 @@ input::placeholder{ color: var(--text-dim); }
       <div class="pf-card" id="admin-list"></div>
     </div>
 
+    <!-- ADMIN EXERCISES (reachable only from Profile, admins only) -->
+    <div id="view-admin-ex" class="tab-view hidden">
+      <button class="adm-back" id="admin-ex-back">&larr; Back to profile</button>
+      <div class="pf-card" id="admin-ex-list"></div>
+    </div>
+
     <!-- NAV -->
     <nav id="bottom-nav">
       <button class="nav-btn active" data-tab="today">
@@ -837,6 +846,21 @@ input::placeholder{ color: var(--text-dim); }
       <div class="form-label">Confirm new PIN</div>
       <input type="password" inputmode="numeric" maxlength="4" id="adm-pin2" autocomplete="off">
       <button class="primary-btn" id="adm-pin-save">Reset PIN</button>
+    </div>
+
+    <!-- step 8: admin — rename exercise -->
+    <div id="sheet-ex-rename" class="hidden">
+      <div class="sheet-title"><span id="ex-rename-title">Rename exercise</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Name</div>
+      <input type="text" id="ex-rename-input" maxlength="60" autocomplete="off">
+      <button class="primary-btn" id="ex-rename-save">Rename</button>
+    </div>
+
+    <!-- step 9: admin — merge exercise (pick the winner to keep) -->
+    <div id="sheet-ex-merge" class="hidden">
+      <div class="sheet-title"><span id="ex-merge-title">Merge exercise</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="search-note" id="ex-merge-note"></div>
+      <div id="ex-merge-list"></div>
     </div>
   </div>
 
@@ -1239,7 +1263,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -1979,6 +2003,10 @@ function renderProfile() {
     <button class="pf-card adm-entry" id="pf-admin-btn">
       <span class="pf-title">Admin</span>
       <span class="pf-edit">Manage friends &rsaquo;</span>
+    </button>
+    <button class="pf-card adm-entry" id="pf-admin-ex-btn">
+      <span class="pf-title">Admin</span>
+      <span class="pf-edit">Manage exercises &rsaquo;</span>
     </button>` : ''}
     <div class="pf-card">
       <div class="pf-card-head">
@@ -2010,7 +2038,10 @@ function renderProfile() {
   $('#bw-log-btn').addEventListener('click', logWeight);
   $$('#hide-stats-seg button').forEach((b) =>
     b.addEventListener('click', () => saveHideStats(b.dataset.hs === 'hide')));
-  if (session.is_admin) $('#pf-admin-btn').addEventListener('click', showAdmin);
+  if (session.is_admin) {
+    $('#pf-admin-btn').addEventListener('click', showAdmin);
+    $('#pf-admin-ex-btn').addEventListener('click', showAdminEx);
+  }
 }
 
 /* ---------- body-weight logging ---------- */
@@ -2274,17 +2305,237 @@ async function saveNewPin() {
 }
 
 /* ============================================================
+   ADMIN EXERCISES (rename / merge / delete — admins only)
+   ============================================================ */
+let adminExercises = [];   // exercises rows + log_count
+let adminExSeq = 0;
+let exRenameTarget = null; // exercise being renamed
+let exMergeLoser = null;   // exercise being merged away
+
+function showAdminEx() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  switchTab('admin-ex');
+}
+
+async function loadAdminEx() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const seq = ++adminExSeq;
+  const box = $('#admin-ex-list');
+  box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading exercises…</div>';
+  const { data, error } = await sb.from('exercises')
+    .select('id, name, measure_type, muscle_group, workout_logs(count)')
+    .order('name');
+  if (seq !== adminExSeq) return; // stale response
+  if (error) {
+    box.innerHTML = `<div class="state-msg">Couldn't load exercises.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="admin-ex-retry">Retry</button></div>`;
+    $('#admin-ex-retry').addEventListener('click', loadAdminEx);
+    return;
+  }
+  adminExercises = (data || []).map((ex) => ({
+    ...ex,
+    log_count: ex.workout_logs?.[0]?.count ?? 0,
+  }));
+  renderAdminExList();
+}
+
+function renderAdminExList() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const box = $('#admin-ex-list');
+  if (adminExercises.length === 0) {
+    box.innerHTML = `
+      <div class="empty-state">
+        <div class="big">🏋️</div>
+        No exercises yet.
+      </div>`;
+    return;
+  }
+  box.innerHTML = '';
+  adminExercises.forEach((ex) => {
+    const row = document.createElement('div');
+    row.className = 'adm-row';
+    const tag = [ex.measure_type, ex.muscle_group,
+      `${ex.log_count} log${ex.log_count === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+    row.innerHTML = `
+      <div>
+        <div class="member-name">${escapeHtml(ex.name)}</div>
+        <div class="member-tag">${escapeHtml(tag)}</div>
+      </div>
+      <span class="adm-acts">
+        <button class="adm-reset" data-act="rename">Rename</button>
+        <button class="adm-reset" data-act="merge">Merge</button>
+        <button class="adm-reset danger" data-act="delete">Delete</button>
+      </span>`;
+    row.querySelector('[data-act="rename"]').addEventListener('click', () => openExRename(ex));
+    row.querySelector('[data-act="merge"]').addEventListener('click', () => openExMerge(ex));
+    row.querySelector('[data-act="delete"]').addEventListener('click', () => confirmExDelete(ex));
+    box.appendChild(row);
+  });
+}
+
+/* ---------- rename (exercises.name only) ---------- */
+function openExRename(ex) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  exRenameTarget = ex;
+  $('#ex-rename-title').textContent = `Rename — ${ex.name}`;
+  $('#ex-rename-input').value = ex.name;
+  openSheet('ex-rename');
+}
+
+async function saveExRename() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  if (!exRenameTarget) return;
+  const name = $('#ex-rename-input').value.trim();
+  if (!name) { toast('Give the exercise a name', 'err'); return; }
+  if (name === exRenameTarget.name) { closeSheet(); return; } // unchanged: nothing to save
+  const btn = $('#ex-rename-save');
+  btn.disabled = true;
+  try {
+    // block a name that case-insensitively matches a DIFFERENT exercise;
+    // escape ilike wildcards so a typed % or _ can't false-match
+    const term = name.replace(/[\\%_]/g, '\\$&');
+    const { data: dup, error: dupErr } = await sb.from('exercises')
+      .select('id').ilike('name', term).neq('id', exRenameTarget.id).limit(1);
+    if (dupErr) { sbError('Rename failed', dupErr); return; }
+    if (dup && dup.length > 0) { toast(`An exercise named "${name}" already exists`, 'err'); return; }
+    // workout_logs untouched: logs reference exercise_id and join the name at read time
+    const { error } = await sb.from('exercises')
+      .update({ name }).eq('id', exRenameTarget.id);
+    if (error) { sbError('Rename failed', error); return; }
+    toast(`Renamed to "${name}"`);
+    exRenameTarget = null;
+    closeSheet();
+    loadAdminEx();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------- merge (loser -> winner, same measure_type only) ---------- */
+function openExMerge(loser) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  exMergeLoser = loser;
+  $('#ex-merge-title').textContent = `Merge — ${loser.name}`;
+  const list = $('#ex-merge-list');
+  list.innerHTML = '';
+  // only same-measure_type winners: set shapes differ per type ({kg,reps} /
+  // {secs} / {reps}), and formatSets/bestPerDay/logCalories all interpret
+  // sets via the exercise's measure_type, so cross-type merges corrupt data
+  const candidates = adminExercises.filter((ex) =>
+    ex.id !== loser.id && ex.measure_type === loser.measure_type);
+  $('#ex-merge-note').textContent = candidates.length > 0
+    ? `Pick the exercise to keep. All of "${loser.name}"'s logs move into it, then "${loser.name}" is deleted.`
+    : `No other "${loser.measure_type}" exercises to merge into — only exercises measured the same way can be merged.`;
+  candidates.forEach((ex) => {
+    const b = document.createElement('button');
+    b.className = 'ex-row';
+    b.innerHTML = `
+      <span class="ex-name">${escapeHtml(ex.name)}</span>
+      <span class="ex-meta">${escapeHtml(ex.muscle_group || '')} · ${escapeHtml(ex.measure_type)}</span>`;
+    b.addEventListener('click', () => runExMerge(ex));
+    list.appendChild(b);
+  });
+  openSheet('ex-merge');
+}
+
+async function runExMerge(winner) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const loser = exMergeLoser;
+  if (!loser || winner.id === loser.id) return;
+  if (winner.measure_type !== loser.measure_type) { // belt-and-braces re-check
+    toast('Can only merge exercises measured the same way', 'err');
+    return;
+  }
+  const [lRes, wRes] = await Promise.all([
+    sb.from('workout_logs').select('id, member_id, log_date, sets').eq('exercise_id', loser.id),
+    sb.from('workout_logs').select('id, member_id, log_date, sets').eq('exercise_id', winner.id),
+  ]);
+  const fetchErr = lRes.error || wRes.error;
+  if (fetchErr) { sbError('Merge failed', fetchErr); return; }
+  const loserLogs = lRes.data || [];
+  const winnerByKey = new Map();
+  (wRes.data || []).forEach((r) => winnerByKey.set(`${r.member_id}|${r.log_date}`, r));
+
+  const n = loserLogs.length;
+  if (!(await confirmModal({
+    title: 'Merge exercises?',
+    message: `Move ${n} logged workout${n === 1 ? '' : 's'} from "${loser.name}" into "${winner.name}", then delete "${loser.name}". This can't be undone.`,
+    confirmLabel: 'Merge',
+    danger: true,
+  }))) return;
+
+  // Sequential, not atomic (the JS client has no transaction): stop at the
+  // first error. The loser exercises row is deleted only after every log row
+  // succeeded, so a halfway failure leaves both exercises intact and
+  // re-running the merge finishes the job.
+  for (const row of loserLogs) {
+    const winnerRow = winnerByKey.get(`${row.member_id}|${row.log_date}`);
+    if (!winnerRow) {
+      const { error } = await sb.from('workout_logs')
+        .update({ exercise_id: winner.id }).eq('id', row.id);
+      if (error) { sbError('Merge failed', error); return; }
+    } else {
+      // collision: append loser sets to the winner row, then delete the loser
+      // row — winner is written FIRST so no failure point can lose set data.
+      // null-safe: legacy rows may hold sets as null or a non-array.
+      const wSets = Array.isArray(winnerRow.sets) ? winnerRow.sets : [];
+      const lSets = Array.isArray(row.sets) ? row.sets : [];
+      const combinedSets = [...wSets, ...lSets];
+      const { error: upErr } = await sb.from('workout_logs')
+        .update({ sets: combinedSets }).eq('id', winnerRow.id);
+      if (upErr) { sbError('Merge failed', upErr); return; }
+      // keep the in-memory copy current: one row per member+date is a
+      // convention (saveEntry), not a DB constraint, so a later loser row can
+      // collide with this same winner row and must append to the accumulated
+      // sets, not the stale pre-merge array
+      winnerRow.sets = combinedSets;
+      const { error: delErr } = await sb.from('workout_logs').delete().eq('id', row.id);
+      if (delErr) { sbError('Merge failed', delErr); return; }
+    }
+  }
+  const { error } = await sb.from('exercises').delete().eq('id', loser.id);
+  if (error) { sbError('Merge failed', error); return; }
+  toast(`Merged "${loser.name}" into "${winner.name}"`);
+  exMergeLoser = null;
+  closeSheet();
+  loadAdminEx();
+}
+
+/* ---------- delete (only when zero logs reference it) ---------- */
+async function confirmExDelete(ex) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const { count, error } = await sb.from('workout_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('exercise_id', ex.id);
+  if (error) { sbError('Delete failed', error); return; }
+  if ((count ?? 0) > 0) {
+    toast(`"${ex.name}" has ${count} log${count === 1 ? '' : 's'} — merge it instead`, 'err');
+    return;
+  }
+  if (!(await confirmModal({
+    title: 'Delete exercise?',
+    message: `Delete "${ex.name}"? It has no logged workouts.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  }))) return;
+  const { error: delErr } = await sb.from('exercises').delete().eq('id', ex.id);
+  if (delErr) { sbError('Delete failed', delErr); return; }
+  toast(`Deleted "${ex.name}"`);
+  loadAdminEx();
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 function switchTab(tab) {
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ['today', 'history', 'friends', 'profile', 'admin'].forEach((t) =>
+  ['today', 'history', 'friends', 'profile', 'admin', 'admin-ex'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
   if (tab === 'friends') loadFriends();
   if (tab === 'profile') loadProfile();
   if (tab === 'admin') loadAdmin();
+  if (tab === 'admin-ex') loadAdminEx();
 }
 
 function enterApp() {
@@ -2340,6 +2591,8 @@ function init() {
   $('#admin-add-btn').addEventListener('click', openAdminAdd);
   $('#adm-add-save').addEventListener('click', saveNewMember);
   $('#adm-pin-save').addEventListener('click', saveNewPin);
+  $('#admin-ex-back').addEventListener('click', () => switchTab('profile'));
+  $('#ex-rename-save').addEventListener('click', saveExRename);
 
   $$('#measure-seg button').forEach((b) => b.addEventListener('click', () => {
     createMeasure = b.dataset.mt;
