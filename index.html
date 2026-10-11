@@ -523,9 +523,40 @@ input::placeholder{ color: var(--text-dim); }
   width: 100%;
 }
 .ex-row:active{ border-color: var(--accent-dim); }
+.ex-row .ex-main{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .ex-row .ex-name{ font-weight: 600; }
-.ex-row .ex-meta{ font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.ex-row .ex-meta{ font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ex-row.create-row{ border-style: dashed; color: var(--accent); }
+.ex-thumb{
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.ex-thumb-ph{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.pick-group{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  padding: 11px 4px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.pick-group:active{ color: var(--accent); }
+.pick-count{ color: var(--text-dim); font-size: 13px; font-weight: 600; }
+.pick-chev{ display: inline-block; width: 18px; text-align: center; color: var(--text-dim); }
 .search-note{ color: var(--text-dim); font-size: 14px; text-align: center; padding: 14px 4px; }
 
 /* create-exercise mini form */
@@ -889,7 +920,7 @@ const SUPABASE_KEY = 'sb_publishable_KJXwX1ZDZloFRWurhtjxyA_wg2UjEm9';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const SESSION_KEY = 'repmate_session';
-const MUSCLE_GROUPS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'];
+const MUSCLE_GROUPS = ['Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Glutes', 'Core', 'Cardio', 'Full Body'];
 
 /* ============================================================
    HELPERS
@@ -1170,8 +1201,8 @@ let currentExercise = null; // { id, name, measure_type, muscle_group }
 let editingLog = null;     // existing workout_logs row when editing
 let createMeasure = 'weight';
 let createMuscle = null;
-let searchTimer = null;
-let searchSeq = 0;
+let allExercises = null;      // cached full library for this app session
+let openGroups = new Set();   // which group headers are expanded
 
 function renderDateHeader() {
   const isToday = selectedDate === localISO();
@@ -1285,60 +1316,102 @@ function closeSheet() {
   setTimeout(() => $('#sheet-backdrop').classList.add('hidden'), 220);
 }
 
-/* ---------- step 1: search ---------- */
-function openSearch() {
+/* ---------- step 1: browse / search picker ---------- */
+async function openSearch() {
   openSheet('search');
   const input = $('#ex-search');
   input.value = '';
-  $('#ex-results').innerHTML = '<div class="search-note">Type to search exercises.</div>';
   setTimeout(() => input.focus(), 250);
+  if (allExercises === null) {
+    // fetched once per page load; the cache persists until reload
+    $('#ex-results').innerHTML = '<div class="search-note">Loading exercises…</div>';
+    const { data, error } = await sb.from('exercises')
+      .select('id, name, measure_type, muscle_group, image_url')
+      .order('name');
+    if (error) {
+      $('#ex-results').innerHTML = `<div class="search-note">Load failed: ${escapeHtml(error.message)}</div>`;
+      sbError('Load failed', error);
+      return;
+    }
+    allExercises = data || [];
+  }
+  openGroups = new Set(); // all groups collapsed on every open
+  renderPicker('');
 }
 
 function onSearchInput() {
-  clearTimeout(searchTimer);
-  const term = $('#ex-search').value.trim();
-  if (!term) {
-    $('#ex-results').innerHTML = '<div class="search-note">Type to search exercises.</div>';
-    return;
-  }
-  searchTimer = setTimeout(() => runSearch(term), 250);
+  renderPicker($('#ex-search').value.trim()); // in-memory filter: no debounce needed
 }
 
-async function runSearch(term) {
-  const seq = ++searchSeq;
+function renderPicker(term) {
+  if (allExercises === null) return; // library still loading (or load failed)
   const box = $('#ex-results');
-  box.innerHTML = '<div class="search-note">Searching…</div>';
-  const { data, error } = await sb.from('exercises')
-    .select('id, name, measure_type, muscle_group')
-    .ilike('name', `%${term}%`)
-    .order('name')
-    .limit(10);
-  if (seq !== searchSeq) return; // stale response
-  if (error) {
-    box.innerHTML = `<div class="search-note">Search failed: ${escapeHtml(error.message)}</div>`;
-    sbError('Search failed', error);
-    return;
-  }
-  box.innerHTML = '';
-  (data || []).forEach((ex) => {
-    const b = document.createElement('button');
-    b.className = 'ex-row';
-    b.innerHTML = `
-      <span class="ex-name">${escapeHtml(ex.name)}</span>
-      <span class="ex-meta">${escapeHtml(ex.muscle_group || '')} · ${escapeHtml(ex.measure_type)}</span>`;
-    b.addEventListener('click', () => openEntryForNew(ex));
-    box.appendChild(b);
+  const q = term.toLowerCase();
+
+  // bucket into the nine groups; null/unknown muscle_group falls into "Other"
+  // (muscle_group has no database constraint)
+  const buckets = new Map(MUSCLE_GROUPS.map((g) => [g, []]));
+  buckets.set('Other', []);
+  allExercises.forEach((ex) => {
+    const g = buckets.has(ex.muscle_group) ? ex.muscle_group : 'Other';
+    buckets.get(g).push(ex);
   });
-  const exact = (data || []).some((ex) => ex.name.toLowerCase() === term.toLowerCase());
-  if (!exact) {
-    const b = document.createElement('button');
-    b.className = 'ex-row create-row';
-    b.innerHTML = `<span class="ex-name">+ Create "${escapeHtml(term)}"</span>`;
-    b.addEventListener('click', () => openCreate(term));
-    box.appendChild(b);
-  }
-  if ((data || []).length === 0 && exact) {
-    box.innerHTML = '<div class="search-note">No matches.</div>';
+
+  box.innerHTML = '';
+  buckets.forEach((exs, group) => {
+    if (group === 'Other' && exs.length === 0) return; // guard bucket only when occupied
+    const rows = q ? exs.filter((ex) => ex.name.toLowerCase().includes(q)) : exs;
+    if (q && rows.length === 0) return; // searching: only groups with a match
+    const expanded = q ? true : openGroups.has(group);
+
+    const head = document.createElement('button');
+    head.className = 'pick-group';
+    head.innerHTML = `
+      <span>${escapeHtml(group)}</span>
+      <span class="pick-count">${rows.length}<span class="pick-chev">${expanded ? '−' : '+'}</span></span>`;
+    head.addEventListener('click', () => {
+      if (openGroups.has(group)) openGroups.delete(group);
+      else openGroups.add(group);
+      renderPicker($('#ex-search').value.trim());
+    });
+    box.appendChild(head);
+
+    if (!expanded) return;
+    rows.forEach((ex) => {
+      const b = document.createElement('button');
+      b.className = 'ex-row';
+      const phLetter = (ex.muscle_group || '?')[0].toUpperCase();
+      b.innerHTML = `
+        <span class="ex-thumb ex-thumb-ph">${escapeHtml(phLetter)}</span>
+        <span class="ex-main">
+          <span class="ex-name">${escapeHtml(ex.name)}</span>
+          <span class="ex-meta">${escapeHtml(ex.muscle_group || '')} · ${escapeHtml(ex.measure_type)}</span>
+        </span>`;
+      if (typeof ex.image_url === 'string' && ex.image_url.trim() !== '') {
+        const ph = b.querySelector('.ex-thumb-ph');
+        const img = document.createElement('img');
+        img.className = 'ex-thumb';
+        img.alt = '';
+        img.loading = 'lazy';
+        img.addEventListener('error', () => img.replaceWith(ph)); // broken URL: fall back to placeholder
+        img.src = ex.image_url;
+        ph.replaceWith(img);
+      }
+      b.addEventListener('click', () => openEntryForNew(ex));
+      box.appendChild(b);
+    });
+  });
+
+  // create affordance: shown while searching unless an exact name match exists
+  if (q) {
+    const exact = allExercises.some((ex) => ex.name.toLowerCase() === q);
+    if (!exact) {
+      const b = document.createElement('button');
+      b.className = 'ex-row create-row';
+      b.innerHTML = `<span class="ex-name">+ Create "${escapeHtml(term)}"</span>`;
+      b.addEventListener('click', () => openCreate(term));
+      box.appendChild(b);
+    }
   }
 }
 
@@ -1379,6 +1452,7 @@ async function createExercise() {
   btn.disabled = false;
   if (error) { sbError('Create failed', error); return; }
   toast(`Created "${data.name}"`);
+  allExercises = null;
   openEntryForNew(data);
 }
 
@@ -2404,6 +2478,7 @@ async function saveExRename() {
     toast(`Renamed to "${name}"`);
     exRenameTarget = null;
     closeSheet();
+    allExercises = null;
     loadAdminEx();
   } finally {
     btn.disabled = false;
@@ -2497,6 +2572,7 @@ async function runExMerge(winner) {
   toast(`Merged "${loser.name}" into "${winner.name}"`);
   exMergeLoser = null;
   closeSheet();
+  allExercises = null;
   loadAdminEx();
 }
 
@@ -2520,6 +2596,7 @@ async function confirmExDelete(ex) {
   const { error: delErr } = await sb.from('exercises').delete().eq('id', ex.id);
   if (delErr) { sbError('Delete failed', delErr); return; }
   toast(`Deleted "${ex.name}"`);
+  allExercises = null;
   loadAdminEx();
 }
 
