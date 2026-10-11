@@ -586,6 +586,7 @@ input::placeholder{ color: var(--text-dim); }
   color: var(--text-dim);
 }
 .chip.sel{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.chip-week{ font-size: 11px; color: var(--text-dim); margin-left: 5px; }
 
 /* set entry */
 .last-hint{
@@ -1037,12 +1038,12 @@ function logCalories(log) {
 }
 
 let toastTimer = null;
-function toast(msg, kind = 'ok') {
+function toast(msg, kind = 'ok', ms = kind === 'err' ? 4000 : 2000) {
   const el = $('#toast');
   el.textContent = msg;
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, kind === 'err' ? 4000 : 2000);
+  toastTimer = setTimeout(() => { el.className = ''; }, ms);
 }
 
 function sbError(prefix, error) {
@@ -1203,6 +1204,8 @@ let createMeasure = 'weight';
 let createMuscle = null;
 let allExercises = null;      // cached full library for this app session
 let openGroups = new Set();   // which group headers are expanded
+let planSel = new Set();       // groups chosen in the Plan Today chips
+let weekGroups = new Map();    // muscle_group -> number of distinct days trained this week
 
 function renderDateHeader() {
   const isToday = selectedDate === localISO();
@@ -1225,7 +1228,28 @@ async function loadTodayLogs() {
     return;
   }
   todayLogs = data || [];
+  // week markers only render in the empty state, so skip the fetch otherwise
+  if (todayLogs.length === 0) await loadWeekGroups();
   renderTodayList();
+}
+
+// Distinct training days per muscle group since this week's Monday, for the
+// "Plan today" chip markers. A group trained twice on the same day counts as 1.
+async function loadWeekGroups() {
+  weekGroups = new Map();
+  const { data, error } = await sb.from('workout_logs')
+    .select('log_date, exercises(muscle_group)')
+    .eq('member_id', session.member_id)
+    .gte('log_date', mondayISO(0));
+  if (error) { sbError('Week load failed', error); return; } // non-blocking: empty state still renders
+  const days = new Map(); // group -> Set of distinct log_date
+  (data || []).forEach((row) => {
+    const g = row.exercises?.muscle_group;
+    if (!g) return;
+    if (!days.has(g)) days.set(g, new Set());
+    days.get(g).add(row.log_date);
+  });
+  days.forEach((set, g) => weekGroups.set(g, set.size));
 }
 
 function renderTodayList() {
@@ -1239,7 +1263,24 @@ function renderTodayList() {
         <div class="big">🏋️</div>
         No workouts logged ${isToday ? 'today yet' : 'for this day'}.<br>
         Tap <b>+ Add Workout</b> to log your first set.
+        <div class="form-label">Plan today</div>
+        <div class="chips" id="plan-chips" style="justify-content:center;"></div>
+        <button class="primary-btn" id="plan-start-btn">Start</button>
       </div>`;
+    // seed once from the last saved plan; ignore anything malformed
+    if (planSel.size === 0) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(planLastKey()) || '[]');
+        if (Array.isArray(stored) && stored.every((g) => MUSCLE_GROUPS.includes(g))) {
+          planSel = new Set(stored);
+        }
+      } catch {}
+    }
+    renderPlanChips();
+    $('#plan-start-btn').addEventListener('click', () => {
+      localStorage.setItem(planLastKey(), JSON.stringify([...planSel]));
+      openSearch([...planSel]);
+    });
     return;
   }
   list.innerHTML = '';
@@ -1282,6 +1323,30 @@ function renderTodayList() {
   totalEl.classList.toggle('hidden', dayTotal <= 0);
 }
 
+// Re-renders only the Plan Today chip row (no refetch); no-op when it isn't mounted
+function renderPlanChips() {
+  const row = $('#plan-chips');
+  if (!row) return;
+  row.innerHTML = '';
+  MUSCLE_GROUPS.forEach((g) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (planSel.has(g) ? ' sel' : '');
+    c.textContent = g;
+    const n = weekGroups.get(g);
+    if (n > 0) {
+      const mark = document.createElement('span');
+      mark.className = 'chip-week';
+      mark.textContent = n;
+      c.appendChild(mark);
+    }
+    c.addEventListener('click', () => {
+      if (planSel.has(g)) planSel.delete(g); else planSel.add(g);
+      renderPlanChips();
+    });
+    row.appendChild(c);
+  });
+}
+
 async function confirmDelete(log) {
   const name = log.exercises?.name || 'this workout';
   if (!(await confirmModal({ title: 'Delete workout?', message: `Delete ${name} for ${prettyDate(log.log_date)}?`, confirmLabel: 'Delete', danger: true }))) return;
@@ -1317,7 +1382,7 @@ function closeSheet() {
 }
 
 /* ---------- step 1: browse / search picker ---------- */
-async function openSearch() {
+async function openSearch(preGroups) {
   openSheet('search');
   const input = $('#ex-search');
   input.value = '';
@@ -1335,7 +1400,10 @@ async function openSearch() {
     }
     allExercises = data || [];
   }
-  openGroups = new Set(); // all groups collapsed on every open
+  // collapsed on every open, except groups pre-chosen in Plan Today
+  openGroups = (Array.isArray(preGroups) && preGroups.length > 0)
+    ? new Set(preGroups.filter((g) => MUSCLE_GROUPS.includes(g)))
+    : new Set();
   renderPicker('');
 }
 
@@ -1997,6 +2065,8 @@ let obGender = null;
 const GENDERS = ['male', 'female', 'other'];
 
 const onboardDoneKey = () => `repmate_onboard_done_${session.member_id}`;
+const planLastKey  = () => `repmate_plan_last_${session.member_id}`;
+const warmupKey    = () => `repmate_warmup_${session.member_id}_${localISO()}`;
 
 function statsIncomplete(p) {
   return !p || p.height_cm == null || p.date_of_birth == null || p.gender == null;
@@ -2628,6 +2698,15 @@ function enterApp() {
     if (latestWeightKg != null && todayLogs.length > 0) renderTodayList();
   });
   maybeShowOnboarding();
+  maybeWarmupToast();
+}
+
+// Daily greeting, fires once per member per local day regardless of logged
+// workouts. Keys from previous days stay in localStorage (no cleanup).
+function maybeWarmupToast() {
+  if (localStorage.getItem(warmupKey())) return;
+  localStorage.setItem(warmupKey(), '1');
+  toast('Warm up before you start — a few light sets beat a cold first rep.', 'ok', 5000);
 }
 
 /* ---------- wire up events ---------- */
@@ -2655,7 +2734,7 @@ function init() {
     loadTodayLogs();
   });
 
-  $('#add-btn').addEventListener('click', openSearch);
+  $('#add-btn').addEventListener('click', () => openSearch()); // no args: the click Event must not reach preGroups
   $('#banner-add-btn').addEventListener('click', () => openOnboard('onboard'));
   $('#ob-save-btn').addEventListener('click', saveOnboard);
   $('#ob-skip-btn').addEventListener('click', closeSheet);
