@@ -618,6 +618,24 @@ input::placeholder{ color: var(--text-dim); }
   font-weight: 600;
 }
 .unit-toggle button.sel{ background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.row-timer{ color: var(--text-dim); padding: 8px; font-size: 18px; flex-shrink: 0; line-height: 1; }
+.row-timer:active{ color: var(--accent); }
+#timer-panel{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 12px;
+  text-align: center;
+}
+#timer-display{
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+#timer-actions{ margin-top: 4px; }
+#timer-result{ margin-top: 4px; color: var(--text-dim); font-size: 15px; }
 .addset-btn{
   width: 100%;
   margin-top: 12px;
@@ -834,6 +852,17 @@ input::placeholder{ color: var(--text-dim); }
       <div class="sheet-title"><span id="entry-title"></span> <button class="sheet-close" data-close>&times;</button></div>
       <div class="last-hint" id="last-hint"></div>
       <div id="set-rows"></div>
+      <div id="timer-panel" class="hidden">
+        <div id="timer-display">0s</div>
+        <div id="timer-actions">
+          <button class="primary-btn" id="timer-stop">Stop</button>
+        </div>
+        <div id="timer-result" class="hidden">
+          <div id="timer-result-text"></div>
+          <button class="primary-btn" id="timer-use">Use</button>
+          <button class="skip-btn" id="timer-discard">Discard</button>
+        </div>
+      </div>
       <button class="addset-btn hidden" id="addset-btn">+ Add Set</button>
       <button class="primary-btn" id="save-btn">Save</button>
     </div>
@@ -1373,6 +1402,7 @@ function closeSheet() {
   if (sheetStep === 'onboard' && onboardMode === 'onboard') {
     localStorage.setItem(onboardDoneKey(), '1');
   }
+  discardTimer(); // a running timer (and its wake lock) never survives the sheet
   sheetStep = null;
   editingLog = null;
   currentExercise = null;
@@ -1574,6 +1604,12 @@ async function loadLastHint() {
   hint.innerHTML = `Last (${escapeHtml(prettyDate(last.log_date))}): <b>${escapeHtml(formatSets(last.sets, currentExercise.measure_type))}</b>`;
 }
 
+/* ---------- in-app timer for timed sets ---------- */
+let timerStart = null;      // Date.now() when the running timer began
+let timerTick = null;       // setInterval handle for the display only
+let timerRow = null;        // the .set-row element the running timer belongs to
+let wakeLock = null;        // WakeLockSentinel or null
+
 function addSetRow(mt, values = {}) {
   const rows = $('#set-rows');
   const row = document.createElement('div');
@@ -1604,7 +1640,9 @@ function addSetRow(mt, values = {}) {
         <button data-u="s">s</button>
         <button data-u="m">m</button>
       </span>
+      <button class="row-timer" aria-label="Start timer">⏱</button>
       <button class="row-del" aria-label="Remove set">✕</button>`;
+    row.querySelector('.row-timer').addEventListener('click', () => startTimer(row));
     row.querySelectorAll('.unit-toggle button').forEach((b) => {
       b.classList.toggle('sel', b.dataset.u === row.dataset.unit);
       b.addEventListener('click', () => {
@@ -1622,6 +1660,76 @@ function addSetRow(mt, values = {}) {
 
 function renumberRows() {
   $$('#set-rows .set-row .set-num').forEach((el, i) => { el.textContent = i + 1; });
+}
+
+// Elapsed is ALWAYS derived from Date.now() vs timerStart; a backgrounded tab
+// throttles intervals, so a tick-based counter would under-report after sleep.
+// The interval only repaints the display. The save path never sees the timer —
+// "Use" just fills the row's existing input and dataset.unit.
+function elapsedSecs() {
+  return timerStart == null ? 0 : Math.floor((Date.now() - timerStart) / 1000);
+}
+
+async function startTimer(row) {
+  if (timerStart != null) { toast('Stop the running timer first', 'err'); return; }
+  timerRow = row;
+  timerStart = Date.now();
+  $('#timer-panel').classList.remove('hidden');
+  $('#timer-result').classList.add('hidden');
+  $('#timer-stop').classList.remove('hidden');
+  timerTick = setInterval(renderTimer, 250);
+  renderTimer();
+  await requestWake(); // failure must not stop the timer
+}
+
+function renderTimer() {
+  $('#timer-display').textContent = formatDuration(elapsedSecs());
+}
+
+function stopTimer() {
+  const secs = elapsedSecs();
+  clearInterval(timerTick); timerTick = null; timerStart = null;
+  releaseWake();
+  $('#timer-panel').dataset.secs = secs;
+  $('#timer-stop').classList.add('hidden');
+  $('#timer-result').classList.remove('hidden');
+  $('#timer-result-text').textContent = `Timed: ${formatDuration(secs)}`;
+  // row is written only on "Use" — confirmation required
+}
+
+function useTimer() {
+  const secs = parseInt($('#timer-panel').dataset.secs, 10);
+  if (timerRow && document.contains(timerRow)) {
+    if (secs > 0) {
+      timerRow.querySelector('input[data-f="val"]').value = secs;
+      timerRow.dataset.unit = 's';
+      timerRow.querySelectorAll('.unit-toggle button').forEach((b) =>
+        b.classList.toggle('sel', b.dataset.u === 's'));
+    }
+  } else {
+    toast('That set row is gone', 'err');
+  }
+  discardTimer();
+}
+
+function discardTimer() {
+  clearInterval(timerTick); timerTick = null; timerStart = null; timerRow = null;
+  releaseWake();
+  $('#timer-panel').classList.add('hidden');
+  $('#timer-result').classList.add('hidden');
+}
+
+// Wake lock is best-effort: unsupported (iOS Safari) or refused is expected,
+// never surfaced to the user.
+async function requestWake() {
+  try {
+    if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+  } catch { wakeLock = null; }
+}
+
+async function releaseWake() {
+  try { await wakeLock?.release(); } catch {}
+  wakeLock = null;
 }
 
 function collectSets(mt) {
@@ -2742,6 +2850,14 @@ function init() {
   $('#create-ex-btn').addEventListener('click', createExercise);
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
   $('#save-btn').addEventListener('click', saveEntry);
+
+  $('#timer-stop').addEventListener('click', stopTimer);
+  $('#timer-use').addEventListener('click', useTimer);
+  $('#timer-discard').addEventListener('click', discardTimer);
+  // browsers drop the wake lock on hide; re-request while a timer is running
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && timerStart != null) requestWake();
+  });
 
   $('#admin-back').addEventListener('click', () => switchTab('profile'));
   $('#admin-add-btn').addEventListener('click', openAdminAdd);
