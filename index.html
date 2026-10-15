@@ -1024,14 +1024,48 @@ function setSecs(s) {
   return null;
 }
 
+// Treadmill sets carry speed and incline; older sets carry neither.
+function setHasPace(s) {
+  return s != null && s.speed_kmh != null && Number.isFinite(Number(s.speed_kmh));
+}
+
+// ACSM metabolic equations. Speed in m/min, grade as a fraction.
+// Walking:  VO2 = (0.1 * S) + (1.8 * S * G) + 3.5   - validated ~3 to 6 km/h
+// Running:  VO2 = (0.2 * S) + (0.9 * S * G) + 3.5   - validated above ~8 km/h
+// We switch at 8 km/h. Between 6 and 8 both equations drift; a fast walker at
+// 7 km/h gets the walking equation and is slightly under-estimated. Accepted.
+function paceMet(speedKmh, inclinePct) {
+  const s = Number(speedKmh);
+  if (!Number.isFinite(s) || s <= 0) return null;
+  const mPerMin = s * 16.6667;
+  const grade = Number.isFinite(Number(inclinePct)) ? Number(inclinePct) / 100 : 0;
+  const vo2 = s >= 8
+    ? (0.2 * mPerMin) + (0.9 * mPerMin * grade) + 3.5
+    : (0.1 * mPerMin) + (1.8 * mPerMin * grade) + 3.5;
+  return vo2 / 3.5;
+}
+
 // Format a sets jsonb array for display, e.g. "20kg x 12, 25kg x 10" / "45s, 40s" / "12 x 3"
 function formatSets(sets, measureType) {
   if (!Array.isArray(sets) || sets.length === 0) return '—';
   if (measureType === 'time') {
-    const durs = sets.map(setSecs).filter((v) => v != null);
-    if (durs.length === 0) return '—';
-    if (durs.length > 1 && durs.every((v) => v === durs[0])) return `${formatDuration(durs[0])} x ${durs.length}`;
-    return durs.map(formatDuration).join(', ');
+    const valid = sets.filter((s) => setSecs(s) != null);
+    if (valid.length === 0) return '—';
+    if (valid.every((s) => !setHasPace(s))) {
+      // no speeds anywhere: identical output to before, incl. the "x N" collapse
+      const durs = valid.map(setSecs);
+      if (durs.length > 1 && durs.every((v) => v === durs[0])) return `${formatDuration(durs[0])} x ${durs.length}`;
+      return durs.map(formatDuration).join(', ');
+    }
+    // any set with a speed: always listed individually (equal durations at
+    // different speeds are different sets)
+    return valid.map((s) => {
+      const dur = formatDuration(setSecs(s));
+      if (!setHasPace(s)) return dur;
+      const inc = Number(s.incline_pct);
+      const incTxt = Number.isFinite(inc) && inc !== 0 ? ` ${inc}%` : '';
+      return `${dur} at ${Number(s.speed_kmh)}km/h${incTxt}`;
+    }).join(', ');
   }
   if (measureType === 'reps') {
     const reps = sets.map((s) => s.reps ?? 0);
@@ -1072,14 +1106,21 @@ function logCalories(log) {
   const met = metFor(ex);
   if (met == null) return null;
   const sets = Array.isArray(log.sets) ? log.sets : [];
-  let secs;
+  let metSecs; // sum of per-set MET x seconds
   if (ex.measure_type === 'time') {
-    secs = sets.map(setSecs).filter((v) => v != null).reduce((a, b) => a + b, 0);
+    // each set costed on its own ACSM MET when it carries a speed;
+    // sets without one fall back to the exercise MET (same maths as before)
+    metSecs = sets.reduce((sum, s) => {
+      const secs = setSecs(s);
+      if (secs == null) return sum;
+      const m = (setHasPace(s) ? paceMet(s.speed_kmh, s.incline_pct) : null) ?? met;
+      return sum + m * secs;
+    }, 0);
   } else {
-    secs = sets.length * SET_SECONDS;
+    metSecs = met * sets.length * SET_SECONDS;
   }
-  if (secs <= 0) return null;
-  const kcal = Math.round(met * latestWeightKg * (secs / 3600));
+  if (metSecs <= 0) return null;
+  const kcal = Math.round(latestWeightKg * (metSecs / 3600));
   return kcal > 0 ? kcal : null;            // never render "~0 kcal"
 }
 
@@ -1264,7 +1305,7 @@ async function loadTodayLogs() {
   const list = $('#today-list');
   list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading workouts…</div>';
   const { data, error } = await sb.from('workout_logs')
-    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met)')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met, calorie_model)')
     .eq('member_id', session.member_id)
     .eq('log_date', selectedDate)
     .order('id');
@@ -1438,7 +1479,7 @@ async function openSearch(preGroups) {
     // fetched once per page load; the cache persists until reload
     $('#ex-results').innerHTML = '<div class="search-note">Loading exercises…</div>';
     const { data, error } = await sb.from('exercises')
-      .select('id, name, measure_type, muscle_group, image_url')
+      .select('id, name, measure_type, muscle_group, image_url, calorie_model')
       .order('name');
     if (error) {
       $('#ex-results').innerHTML = `<div class="search-note">Load failed: ${escapeHtml(error.message)}</div>`;
@@ -1562,7 +1603,7 @@ async function createExercise() {
   btn.disabled = true;
   const { data, error } = await sb.from('exercises')
     .insert({ name, measure_type: createMeasure, muscle_group: createMuscle })
-    .select('id, name, measure_type, muscle_group')
+    .select('id, name, measure_type, muscle_group, calorie_model')
     .single();
   btn.disabled = false;
   if (error) { sbError('Create failed', error); return; }
@@ -1650,13 +1691,17 @@ function addSetRow(mt, values = {}) {
     const useMins = secs != null && secs >= 60 && secs % 60 === 0;
     row.dataset.unit = useMins ? 'm' : 's';
     const val = secs == null ? '' : (useMins ? secs / 60 : secs);
+    // treadmill exercises get per-set speed/incline; other time rows are unchanged
+    const paceInputs = currentExercise?.calorie_model === 'treadmill' ? `
+      <input type="number" inputmode="decimal" min="0" step="0.1" placeholder="km/h" data-f="speed_kmh" value="${values.speed_kmh ?? ''}">
+      <input type="number" inputmode="decimal" min="0" step="0.5" placeholder="%" data-f="incline_pct" value="${values.incline_pct ?? ''}">` : '';
     row.innerHTML = `
       <span class="set-num">${n}</span>
       <input type="number" inputmode="decimal" min="0" placeholder="time" data-f="val" value="${val}">
       <span class="unit-toggle">
         <button data-u="s">s</button>
         <button data-u="m">m</button>
-      </span>
+      </span>${paceInputs}
       <button class="row-timer" aria-label="Start timer">⏱</button>
       <button class="row-del" aria-label="Remove set">✕</button>`;
     row.querySelector('.row-timer').addEventListener('click', () => startTimer(row));
@@ -1763,7 +1808,10 @@ function collectSets(mt) {
       sets.push({ reps: vals.reps });
     } else if (mt === 'time' && vals.val != null && vals.val > 0) {
       const unit = row.dataset.unit || 's';
-      sets.push({ secs: unit === 'm' ? Math.round(vals.val * 60) : Math.round(vals.val) });
+      const set = { secs: unit === 'm' ? Math.round(vals.val * 60) : Math.round(vals.val) };
+      if (vals.speed_kmh != null) set.speed_kmh = vals.speed_kmh;
+      if (vals.incline_pct != null) set.incline_pct = vals.incline_pct;
+      sets.push(set);
     }
   });
   return sets;
@@ -1832,7 +1880,7 @@ async function loadHistory() {
   list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading history…</div>';
   renderCalStrip();
   const { data, error } = await sb.from('workout_logs')
-    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met)')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met, calorie_model)')
     .eq('member_id', session.member_id)
     .order('log_date', { ascending: false })
     .order('id', { ascending: true });
