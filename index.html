@@ -1045,16 +1045,7 @@ function formatSets(sets, measureType) {
 /* ---------- calorie estimates (display only) ---------- */
 const MET_BY_TYPE = { time: 3.5, weight: 3.5, reps: 3.8 };
 
-// Checked in order against the lowercased exercise name; first match wins.
-const MET_KEYWORDS = [
-  ['run',   8.0],
-  ['jog',   8.0],
-  ['cycle', 6.8],
-  ['bike',  6.8],
-  ['walk',  3.5],
-];
-
-const SET_SECONDS = 40; // assumed active seconds per weight/reps set
+const SET_SECONDS = 130; // ~40s active + ~90s rest per weight/reps set
 
 let latestWeightKg = null; // latest body_weights.weight_kg for the session member
 
@@ -1069,8 +1060,8 @@ async function fetchLatestWeight() {
 }
 
 function metFor(exercise) {
-  const name = String(exercise?.name || '').toLowerCase();
-  for (const [kw, met] of MET_KEYWORDS) if (name.includes(kw)) return met;
+  const met = exercise?.default_met;
+  if (met != null && Number.isFinite(Number(met))) return Number(met);
   return MET_BY_TYPE[exercise?.measure_type] ?? null;
 }
 
@@ -1273,7 +1264,7 @@ async function loadTodayLogs() {
   const list = $('#today-list');
   list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading workouts…</div>';
   const { data, error } = await sb.from('workout_logs')
-    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group)')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met)')
     .eq('member_id', session.member_id)
     .eq('log_date', selectedDate)
     .order('id');
@@ -1841,7 +1832,7 @@ async function loadHistory() {
   list.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading history…</div>';
   renderCalStrip();
   const { data, error } = await sb.from('workout_logs')
-    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group)')
+    .select('id, exercise_id, log_date, sets, exercises(id, name, measure_type, muscle_group, default_met)')
     .eq('member_id', session.member_id)
     .order('log_date', { ascending: false })
     .order('id', { ascending: true });
