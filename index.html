@@ -427,6 +427,26 @@ input::placeholder{ color: var(--text-dim); }
 .adm-acts{ display: flex; gap: 2px; flex-shrink: 0; }
 .adm-reset.danger{ color: var(--danger); }
 #ex-merge-list{ display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+#admin-ex-bar{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding: 4px 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#admin-ex-count{ font-size: 13px; color: var(--text-dim); }
+.adm-num{
+  width: 28px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-dim);
+}
 
 /* ============================================================
    BOTTOM NAV
@@ -795,6 +815,12 @@ input::placeholder{ color: var(--text-dim); }
     <!-- ADMIN EXERCISES (reachable only from Profile, admins only) -->
     <div id="view-admin-ex" class="tab-view hidden">
       <button class="adm-back" id="admin-ex-back">&larr; Back to profile</button>
+      <div id="admin-ex-bar">
+        <input type="search" id="admin-ex-search" placeholder="Search exercises…"
+               autocomplete="off">
+        <div class="chips" id="admin-ex-sorts"></div>
+        <div id="admin-ex-count"></div>
+      </div>
       <div class="pf-card" id="admin-ex-list"></div>
     </div>
 
@@ -2560,6 +2586,8 @@ async function saveNewPin() {
    ADMIN EXERCISES (rename / merge / delete — admins only)
    ============================================================ */
 let adminExercises = [];   // exercises rows + log_count
+let adminExSearch = '';    // current filter text
+let adminExSort = 'name';  // 'name' | 'group' | 'logs'
 let adminExSeq = 0;
 let exRenameTarget = null; // exercise being renamed
 let exMergeLoser = null;   // exercise being merged away
@@ -2571,6 +2599,9 @@ function showAdminEx() {
 
 async function loadAdminEx() {
   if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  adminExSearch = '';
+  adminExSort = 'name';
+  $('#admin-ex-search').value = '';
   const seq = ++adminExSeq;
   const box = $('#admin-ex-list');
   box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading exercises…</div>';
@@ -2601,14 +2632,54 @@ function renderAdminExList() {
       </div>`;
     return;
   }
+  // sort chips — rebuilt each render so .sel tracks adminExSort
+  const sorts = $('#admin-ex-sorts');
+  sorts.innerHTML = '';
+  [['name', 'Name'], ['group', 'Muscle group'], ['logs', 'Most logged']].forEach(([key, label]) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (adminExSort === key ? ' sel' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => { adminExSort = key; renderAdminExList(); });
+    sorts.appendChild(b);
+  });
+
+  const q = adminExSearch.toLowerCase();
+  const rows = q
+    ? adminExercises.filter((ex) =>
+        ex.name.toLowerCase().includes(q) ||
+        (ex.muscle_group || '').toLowerCase().includes(q))
+    : adminExercises.slice();
+
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  if (adminExSort === 'group') {
+    // unknown/null group sorts last, then by name within the group
+    const gi = (ex) => { const i = MUSCLE_GROUPS.indexOf(ex.muscle_group); return i === -1 ? MUSCLE_GROUPS.length : i; };
+    rows.sort((a, b) => (gi(a) - gi(b)) || byName(a, b));
+  } else if (adminExSort === 'logs') {
+    rows.sort((a, b) => (b.log_count - a.log_count) || byName(a, b));
+  } else {
+    rows.sort(byName);
+  }
+
+  $('#admin-ex-count').textContent = q
+    ? `${rows.length} of ${adminExercises.length}`
+    : `${adminExercises.length} exercises`;
+
+  if (rows.length === 0) {
+    // filtered to nothing — distinct from the empty-library state above
+    box.innerHTML = '<div class="state-msg">No exercises match.</div>';
+    return;
+  }
+
   box.innerHTML = '';
-  adminExercises.forEach((ex) => {
+  rows.forEach((ex, i) => {
     const row = document.createElement('div');
     row.className = 'adm-row';
     const tag = [ex.measure_type, ex.muscle_group,
       `${ex.log_count} log${ex.log_count === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
     row.innerHTML = `
-      <div>
+      <span class="adm-num">${i + 1}</span>
+      <div style="flex:1;min-width:0">
         <div class="member-name">${escapeHtml(ex.name)}</div>
         <div class="member-tag">${escapeHtml(tag)}</div>
       </div>
@@ -2864,6 +2935,10 @@ function init() {
   $('#adm-add-save').addEventListener('click', saveNewMember);
   $('#adm-pin-save').addEventListener('click', saveNewPin);
   $('#admin-ex-back').addEventListener('click', () => switchTab('profile'));
+  $('#admin-ex-search').addEventListener('input', (e) => {
+    adminExSearch = e.target.value.trim();
+    renderAdminExList();
+  });
   $('#ex-rename-save').addEventListener('click', saveExRename);
 
   $$('#measure-seg button').forEach((b) => b.addEventListener('click', () => {
