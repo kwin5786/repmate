@@ -1066,6 +1066,14 @@ function prettyDate(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+// Postgres time -> 12-hour clock: "08:30:00" -> "8:30 AM", "00:05:00.123" -> "12:05 AM"
+function formatTime12(t) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(t || '');
+  if (!m) return '';
+  const h = parseInt(m[1], 10);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 // Duration display: 45 -> "45s", 120 -> "2m", 150 -> "2m 30s"
 function formatDuration(secs) {
   if (secs < 60) return `${secs}s`;
@@ -2983,7 +2991,7 @@ async function confirmExDelete(ex) {
    ============================================================ */
 async function loadFood() {
   const { data, error } = await sb.from('food_logs')
-    .select('id, meal, qty, created_at, foods(id, name, unit, kcal, protein_g)')
+    .select('id, meal, qty, eaten_time, created_at, foods(id, name, unit, kcal, protein_g)')
     .eq('member_id', session.member_id)
     .eq('log_date', selectedDate)
     .order('created_at');
@@ -3026,7 +3034,7 @@ function renderFoodList() {
       card.innerHTML = `
         <div class="wo-main">
           <div class="wo-name">${escapeHtml(f.name || 'Unknown food')}</div>
-          <div class="wo-sets">${r.qty} × ${escapeHtml(f.unit || '')}</div>
+          <div class="wo-sets">${r.qty} × ${escapeHtml(f.unit || '')}${r.eaten_time ? `<span class="wo-kcal"> · ${formatTime12(r.eaten_time)}</span>` : ''}</div>
           <div class="wo-kcal">~${kcal} kcal · ${protein}g protein</div>
         </div>
         <button class="wo-del" aria-label="Delete">
