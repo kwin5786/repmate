@@ -850,6 +850,7 @@ input::placeholder{ color: var(--text-dim); }
     <!-- ADMIN FOODS (reachable only from Profile, admins only) -->
     <div id="view-admin-food" class="tab-view hidden">
       <button class="adm-back" id="admin-food-back">&larr; Back to profile</button>
+      <button class="adm-add" id="admin-food-add-btn">+ Add food</button>
       <div id="admin-food-bar">
         <input type="search" id="admin-food-search" placeholder="Search foods…"
                autocomplete="off">
@@ -1735,6 +1736,11 @@ async function createFood() {
   if (error) { sbError('Save failed', error); return; }
   toast(`Saved "${data.name}"`);
   closeSheet();
+  allFoods = null; // picker cache refetches on next open
+  if (!$('#view-admin-food').classList.contains('hidden')) {
+    adminFoods = [];
+    loadAdminFood();
+  }
 }
 
 /* ---------- step 3: set entry ---------- */
@@ -3575,6 +3581,7 @@ function init() {
   });
   $('#ex-rename-save').addEventListener('click', saveExRename);
   $('#admin-food-back').addEventListener('click', () => switchTab('profile'));
+  $('#admin-food-add-btn').addEventListener('click', openFoodNew);
   $('#admin-food-search').addEventListener('input', (e) => {
     adminFoodSearch = e.target.value.trim();
     renderAdminFoodList();
