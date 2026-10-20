@@ -890,8 +890,9 @@ input::placeholder{ color: var(--text-dim); }
     <!-- food: log an entry -->
     <div id="sheet-food-entry" class="hidden">
       <div class="sheet-title" id="food-entry-title">Log food <button class="sheet-close" data-close>&times;</button></div>
-      <div class="form-label">Meal</div>
-      <div class="chips" id="meal-chips"></div>
+      <div class="form-label">Eaten at</div>
+      <input type="time" id="food-time">
+      <button class="chip" id="food-snack-toggle">Snack</button>
       <div class="form-label">Quantity</div>
       <input type="number" id="food-qty" inputmode="decimal" min="0.1" max="50" step="0.5" value="1">
       <div class="day-total" id="food-entry-preview"></div>
@@ -1348,7 +1349,6 @@ let allExercises = null;      // cached full library for this app session
 let allFoods = null; // the session member's own foods
 let foodLogs = [];  // food_logs rows for selectedDate
 let pendingFood = null;  // the food being logged
-let pendingMeal = null;  // the chosen meal chip
 let openGroups = new Set();   // which group headers are expanded
 let planSel = new Set();       // groups chosen in the Plan Today chips
 let weekGroups = new Map();    // muscle_group -> number of distinct days trained this week
@@ -2412,10 +2412,6 @@ function renderProfile() {
       <span class="pf-title">Admin</span>
       <span class="pf-edit">Manage exercises &rsaquo;</span>
     </button>` : ''}
-    <button class="pf-card adm-entry" id="pf-food-new-btn">
-      <span class="pf-title">Food</span>
-      <span class="pf-edit">+ Add food &rsaquo;</span>
-    </button>
     <div class="pf-card">
       <div class="pf-card-head">
         <span class="pf-title">${escapeHtml(session.name)}</span>
@@ -2444,8 +2440,6 @@ function renderProfile() {
     </div>`;
   $('#pf-edit-btn').addEventListener('click', () => openOnboard('edit'));
   $('#bw-log-btn').addEventListener('click', logWeight);
-  // temporary entry point (all members) until the Food tab ships
-  $('#pf-food-new-btn').addEventListener('click', openFoodNew);
   $$('#hide-stats-seg button').forEach((b) =>
     b.addEventListener('click', () => saveHideStats(b.dataset.hs === 'hide')));
   if (session.is_admin) {
@@ -3085,31 +3079,24 @@ function renderFoodPicker(term) {
 
 const MEALS = ['breakfast', 'lunch', 'snack', 'dinner'];
 
+// meal from the #food-time value ("HH:MM"); the Snack toggle overrides
 function guessMeal() {
-  const h = new Date().getHours();
+  if ($('#food-snack-toggle').classList.contains('sel')) return 'snack';
+  const m = /^(\d{1,2}):\d{2}/.exec($('#food-time').value);
+  let h = m ? parseInt(m[1], 10) : NaN;
+  if (!Number.isFinite(h) || h > 23) h = new Date().getHours();
   if (h < 11) return 'breakfast';
   if (h < 16) return 'lunch';
   return 'dinner';
 }
 
-function renderMealChips() {
-  const box = $('#meal-chips');
-  box.innerHTML = '';
-  MEALS.forEach((m) => {
-    const b = document.createElement('button');
-    b.className = 'chip' + (m === pendingMeal ? ' sel' : '');
-    b.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-    b.addEventListener('click', () => { pendingMeal = m; renderMealChips(); });
-    box.appendChild(b);
-  });
-}
-
 function openFoodEntry(food) {
   pendingFood = food;
-  pendingMeal = guessMeal();
+  const now = new Date();
+  $('#food-time').value = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  $('#food-snack-toggle').classList.remove('sel');
   $('#food-qty').value = '1';
   $('#food-entry-title').childNodes[0].nodeValue = food.name + ' ';
-  renderMealChips();
   updateFoodPreview();
   openSheet('food-entry');
 }
@@ -3126,14 +3113,16 @@ function updateFoodPreview() {
 async function saveFoodLog() {
   const qty = parseFloat($('#food-qty').value);
   if (!pendingFood) { toast('Pick a food first', 'err'); return; }
-  if (!MEALS.includes(pendingMeal)) { toast('Choose a meal', 'err'); return; }
+  const time = $('#food-time').value;
+  if (!time) { toast('Enter the time you ate', 'err'); return; }
   if (!Number.isFinite(qty) || qty <= 0) { toast('Quantity must be more than 0', 'err'); return; }
   const btn = $('#save-food-log-btn');
   btn.disabled = true;
   const { error } = await sb.from('food_logs').insert({
     member_id: session.member_id,
     log_date: selectedDate,
-    meal: pendingMeal,
+    meal: guessMeal(),
+    eaten_time: time.slice(0, 5) + ':00',
     food_id: pendingFood.id,
     qty
   });
@@ -3141,7 +3130,6 @@ async function saveFoodLog() {
   if (error) { sbError('Could not save', error); return; }
   toast(`Logged ${pendingFood.name}`);
   pendingFood = null;
-  pendingMeal = null;
   closeSheet();
   loadFood();
 }
@@ -3220,6 +3208,7 @@ function init() {
   $('#food-search').addEventListener('input', () => renderFoodPicker($('#food-search').value.trim()));
   $('#save-food-log-btn').addEventListener('click', saveFoodLog);
   $('#food-qty').addEventListener('input', updateFoodPreview);
+  $('#food-snack-toggle').addEventListener('click', () => $('#food-snack-toggle').classList.toggle('sel'));
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
   $('#save-btn').addEventListener('click', saveEntry);
 
