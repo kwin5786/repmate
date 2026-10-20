@@ -870,6 +870,20 @@ input::placeholder{ color: var(--text-dim); }
       <button class="primary-btn" id="create-ex-btn">Create &amp; add sets</button>
     </div>
 
+    <!-- food: create food -->
+    <div id="sheet-food-new" class="hidden">
+      <div class="sheet-title">New food <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Name</div>
+      <input type="text" id="new-food-name" autocomplete="off" placeholder="e.g. Idli">
+      <div class="form-label">Portion</div>
+      <input type="text" id="new-food-unit" autocomplete="off" placeholder="e.g. 1 piece, 1 cup, 1 bowl">
+      <div class="form-label">Calories per portion</div>
+      <input type="number" id="new-food-kcal" inputmode="decimal" min="1" max="2000">
+      <div class="form-label">Protein per portion (g)</div>
+      <input type="number" id="new-food-protein" inputmode="decimal" min="0" max="200">
+      <button class="primary-btn" id="create-food-btn">Save food</button>
+    </div>
+
     <!-- step 3: set entry -->
     <div id="sheet-entry" class="hidden">
       <div class="sheet-title"><span id="entry-title"></span> <button class="sheet-close" data-close>&times;</button></div>
@@ -1443,7 +1457,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge', 'food-new'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -1607,6 +1621,34 @@ async function createExercise() {
   toast(`Created "${data.name}"`);
   allExercises = null;
   openEntryForNew(data);
+}
+
+/* ---------- food: create food ---------- */
+function openFoodNew() {
+  ['#new-food-name', '#new-food-unit', '#new-food-kcal', '#new-food-protein'].forEach((sel) => { $(sel).value = ''; });
+  openSheet('food-new');
+}
+
+async function createFood() {
+  const name = $('#new-food-name').value.trim();
+  const unit = $('#new-food-unit').value.trim();
+  const kcal = parseFloat($('#new-food-kcal').value);
+  const proteinRaw = $('#new-food-protein').value.trim();
+  const protein = proteinRaw === '' ? 0 : parseFloat(proteinRaw);
+  if (!name) { toast('Give the food a name', 'err'); return; }
+  if (!unit) { toast('Add a portion, e.g. 1 piece', 'err'); return; }
+  if (!Number.isFinite(kcal) || kcal <= 0) { toast('Add calories per portion', 'err'); return; }
+  if (!Number.isFinite(protein) || protein < 0) { toast('Protein must be 0 or more', 'err'); return; }
+  const btn = $('#create-food-btn');
+  btn.disabled = true;
+  const { data, error } = await sb.from('foods')
+    .insert({ member_id: session.member_id, name, unit, kcal, protein_g: protein })
+    .select('id, name, unit, kcal, protein_g')
+    .single();
+  btn.disabled = false;
+  if (error) { sbError('Save failed', error); return; }
+  toast(`Saved "${data.name}"`);
+  closeSheet();
 }
 
 /* ---------- step 3: set entry ---------- */
@@ -2322,6 +2364,10 @@ function renderProfile() {
       <span class="pf-title">Admin</span>
       <span class="pf-edit">Manage exercises &rsaquo;</span>
     </button>` : ''}
+    <button class="pf-card adm-entry" id="pf-food-new-btn">
+      <span class="pf-title">Food</span>
+      <span class="pf-edit">+ Add food &rsaquo;</span>
+    </button>
     <div class="pf-card">
       <div class="pf-card-head">
         <span class="pf-title">${escapeHtml(session.name)}</span>
@@ -2350,6 +2396,8 @@ function renderProfile() {
     </div>`;
   $('#pf-edit-btn').addEventListener('click', () => openOnboard('edit'));
   $('#bw-log-btn').addEventListener('click', logWeight);
+  // temporary entry point (all members) until the Food tab ships
+  $('#pf-food-new-btn').addEventListener('click', openFoodNew);
   $$('#hide-stats-seg button').forEach((b) =>
     b.addEventListener('click', () => saveHideStats(b.dataset.hs === 'hide')));
   if (session.is_admin) {
@@ -2956,6 +3004,7 @@ function init() {
   $('#ob-skip-btn').addEventListener('click', closeSheet);
   $('#ex-search').addEventListener('input', onSearchInput);
   $('#create-ex-btn').addEventListener('click', createExercise);
+  $('#create-food-btn').addEventListener('click', createFood);
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
   $('#save-btn').addEventListener('click', saveEntry);
 
