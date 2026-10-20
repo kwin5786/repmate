@@ -443,8 +443,8 @@ input::placeholder{ color: var(--text-dim); }
 .adm-reset{ color: var(--accent); font-size: 13px; font-weight: 600; padding: 8px 10px; flex-shrink: 0; }
 .adm-acts{ display: flex; gap: 2px; flex-shrink: 0; }
 .adm-reset.danger{ color: var(--danger); }
-#ex-merge-list{ display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-#admin-ex-bar{
+#ex-merge-list, #food-merge-list{ display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+#admin-ex-bar, #admin-food-bar{
   position: sticky;
   top: 0;
   z-index: 5;
@@ -456,7 +456,7 @@ input::placeholder{ color: var(--text-dim); }
   flex-direction: column;
   gap: 10px;
 }
-#admin-ex-count{ font-size: 13px; color: var(--text-dim); }
+#admin-ex-count, #admin-food-count{ font-size: 13px; color: var(--text-dim); }
 .adm-num{
   width: 28px;
   flex-shrink: 0;
@@ -847,6 +847,18 @@ input::placeholder{ color: var(--text-dim); }
       <div class="pf-card" id="admin-ex-list"></div>
     </div>
 
+    <!-- ADMIN FOODS (reachable only from Profile, admins only) -->
+    <div id="view-admin-food" class="tab-view hidden">
+      <button class="adm-back" id="admin-food-back">&larr; Back to profile</button>
+      <div id="admin-food-bar">
+        <input type="search" id="admin-food-search" placeholder="Search foods…"
+               autocomplete="off">
+        <div class="chips" id="admin-food-sorts"></div>
+        <div id="admin-food-count"></div>
+      </div>
+      <div class="pf-card" id="admin-food-list"></div>
+    </div>
+
     <!-- NAV -->
     <nav id="bottom-nav">
       <button class="nav-btn active" data-tab="today">
@@ -1004,6 +1016,21 @@ input::placeholder{ color: var(--text-dim); }
       <div class="sheet-title"><span id="ex-merge-title">Merge exercise</span> <button class="sheet-close" data-close>&times;</button></div>
       <div class="search-note" id="ex-merge-note"></div>
       <div id="ex-merge-list"></div>
+    </div>
+
+    <!-- step 10: admin — rename food -->
+    <div id="sheet-food-rename" class="hidden">
+      <div class="sheet-title"><span id="food-rename-title">Rename food</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Name</div>
+      <input type="text" id="food-rename-input" maxlength="60" autocomplete="off">
+      <button class="primary-btn" id="food-rename-save">Rename</button>
+    </div>
+
+    <!-- step 11: admin — merge food (pick the winner to keep) -->
+    <div id="sheet-food-merge" class="hidden">
+      <div class="sheet-title"><span id="food-merge-title">Merge food</span> <button class="sheet-close" data-close>&times;</button></div>
+      <div class="search-note" id="food-merge-note"></div>
+      <div id="food-merge-list"></div>
     </div>
   </div>
 
@@ -1514,7 +1541,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge', 'food-new', 'food-search', 'food-entry'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge', 'food-new', 'food-search', 'food-entry', 'food-rename', 'food-merge'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -2422,6 +2449,10 @@ function renderProfile() {
     <button class="pf-card adm-entry" id="pf-admin-ex-btn">
       <span class="pf-title">Admin</span>
       <span class="pf-edit">Manage exercises &rsaquo;</span>
+    </button>
+    <button class="pf-card adm-entry" id="pf-admin-food-btn">
+      <span class="pf-title">Admin</span>
+      <span class="pf-edit">Manage foods &rsaquo;</span>
     </button>` : ''}
     <div class="pf-card">
       <div class="pf-card-head">
@@ -2456,6 +2487,7 @@ function renderProfile() {
   if (session.is_admin) {
     $('#pf-admin-btn').addEventListener('click', showAdmin);
     $('#pf-admin-ex-btn').addEventListener('click', showAdminEx);
+    $('#pf-admin-food-btn').addEventListener('click', showAdminFood);
   }
 }
 
@@ -2987,6 +3019,259 @@ async function confirmExDelete(ex) {
 }
 
 /* ============================================================
+   ADMIN FOODS (rename / merge / delete — admins only)
+   ============================================================ */
+let adminFoods = [];         // foods rows + log_count + owner
+let adminFoodSearch = '';    // current filter text
+let adminFoodSort = 'name';  // 'name' | 'logs'
+let adminFoodSeq = 0;
+let foodRenameTarget = null; // food being renamed
+let foodMergeLoser = null;   // food being merged away
+
+function showAdminFood() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  switchTab('admin-food');
+}
+
+async function loadAdminFood() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  adminFoodSearch = '';
+  adminFoodSort = 'name';
+  $('#admin-food-search').value = '';
+  const seq = ++adminFoodSeq;
+  const box = $('#admin-food-list');
+  box.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading foods…</div>';
+  // foods are per-member: fetch member names alongside for the owner tag
+  const [fRes, mRes] = await Promise.all([
+    sb.from('foods')
+      .select('id, member_id, name, unit, kcal, protein_g, food_logs(count)')
+      .order('name'),
+    sb.from('members').select('id, name'),
+  ]);
+  if (seq !== adminFoodSeq) return; // stale response
+  const error = fRes.error || mRes.error;
+  if (error) {
+    box.innerHTML = `<div class="state-msg">Couldn't load foods.<br><small>${escapeHtml(error.message)}</small><br><button class="retry-btn" id="admin-food-retry">Retry</button></div>`;
+    $('#admin-food-retry').addEventListener('click', loadAdminFood);
+    return;
+  }
+  const owners = new Map((mRes.data || []).map((m) => [m.id, m.name]));
+  adminFoods = (fRes.data || []).map((f) => ({
+    ...f,
+    owner: owners.get(f.member_id) || 'Unknown member',
+    log_count: f.food_logs?.[0]?.count ?? 0,
+  }));
+  renderAdminFoodList();
+}
+
+function renderAdminFoodList() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const box = $('#admin-food-list');
+  if (adminFoods.length === 0) {
+    box.innerHTML = `
+      <div class="empty-state">
+        <div class="big">🍽️</div>
+        No foods yet.
+      </div>`;
+    return;
+  }
+  // sort chips — rebuilt each render so .sel tracks adminFoodSort
+  const sorts = $('#admin-food-sorts');
+  sorts.innerHTML = '';
+  [['name', 'Name'], ['logs', 'Most logged']].forEach(([key, label]) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (adminFoodSort === key ? ' sel' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => { adminFoodSort = key; renderAdminFoodList(); });
+    sorts.appendChild(b);
+  });
+
+  const q = adminFoodSearch.toLowerCase();
+  const rows = q
+    ? adminFoods.filter((f) =>
+        f.name.toLowerCase().includes(q) ||
+        f.owner.toLowerCase().includes(q))
+    : adminFoods.slice();
+
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  if (adminFoodSort === 'logs') {
+    rows.sort((a, b) => (b.log_count - a.log_count) || byName(a, b));
+  } else {
+    rows.sort(byName);
+  }
+
+  $('#admin-food-count').textContent = q
+    ? `${rows.length} of ${adminFoods.length}`
+    : `${adminFoods.length} foods`;
+
+  if (rows.length === 0) {
+    // filtered to nothing — distinct from the empty-library state above
+    box.innerHTML = '<div class="state-msg">No foods match.</div>';
+    return;
+  }
+
+  box.innerHTML = '';
+  rows.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'adm-row';
+    const tag = [f.owner, f.unit, `${f.kcal} kcal`,
+      `${f.log_count} log${f.log_count === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+    row.innerHTML = `
+      <span class="adm-num">${i + 1}</span>
+      <div style="flex:1;min-width:0">
+        <div class="member-name">${escapeHtml(f.name)}</div>
+        <div class="member-tag">${escapeHtml(tag)}</div>
+      </div>
+      <span class="adm-acts">
+        <button class="adm-reset" data-act="rename">Rename</button>
+        <button class="adm-reset" data-act="merge">Merge</button>
+        <button class="adm-reset danger" data-act="delete">Delete</button>
+      </span>`;
+    row.querySelector('[data-act="rename"]').addEventListener('click', () => openFoodRename(f));
+    row.querySelector('[data-act="merge"]').addEventListener('click', () => openFoodMerge(f));
+    row.querySelector('[data-act="delete"]').addEventListener('click', () => confirmAdminFoodDelete(f));
+    box.appendChild(row);
+  });
+}
+
+/* ---------- rename (foods.name only) ---------- */
+function openFoodRename(food) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  foodRenameTarget = food;
+  $('#food-rename-title').textContent = `Rename — ${food.name}`;
+  $('#food-rename-input').value = food.name;
+  openSheet('food-rename');
+}
+
+async function saveFoodRename() {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  if (!foodRenameTarget) return;
+  const name = $('#food-rename-input').value.trim();
+  if (!name) { toast('Give the food a name', 'err'); return; }
+  if (name === foodRenameTarget.name) { closeSheet(); return; } // unchanged: nothing to save
+  const btn = $('#food-rename-save');
+  btn.disabled = true;
+  try {
+    // block a name that case-insensitively matches a DIFFERENT food of the
+    // SAME member (foods are per-member); escape ilike wildcards so a typed
+    // % or _ can't false-match
+    const term = name.replace(/[\\%_]/g, '\\$&');
+    const { data: dup, error: dupErr } = await sb.from('foods')
+      .select('id').eq('member_id', foodRenameTarget.member_id)
+      .ilike('name', term).neq('id', foodRenameTarget.id).limit(1);
+    if (dupErr) { sbError('Rename failed', dupErr); return; }
+    if (dup && dup.length > 0) { toast(`${foodRenameTarget.owner} already has a food named "${name}"`, 'err'); return; }
+    // food_logs untouched: logs reference food_id and join the name at read time
+    const { error } = await sb.from('foods')
+      .update({ name }).eq('id', foodRenameTarget.id);
+    if (error) { sbError('Rename failed', error); return; }
+    toast(`Renamed to "${name}"`);
+    foodRenameTarget = null;
+    closeSheet();
+    allFoods = null;
+    loadAdminFood();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------- merge (loser -> winner, same unit only) ---------- */
+function openFoodMerge(loser) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  foodMergeLoser = loser;
+  $('#food-merge-title').textContent = `Merge — ${loser.name}`;
+  const list = $('#food-merge-list');
+  list.innerHTML = '';
+  // only same-unit winners: food_logs.qty counts portions of the food's unit,
+  // so moving logs to a food with a different unit silently changes every
+  // past entry's calories and protein
+  const candidates = adminFoods.filter((f) =>
+    f.id !== loser.id && f.unit === loser.unit);
+  $('#food-merge-note').textContent = candidates.length > 0
+    ? `Pick the food to keep. All of "${loser.name}"'s logs move into it, then "${loser.name}" is deleted.`
+    : `No other "${loser.unit}" foods to merge into — only foods with the same portion can be merged, because logged quantities are counted in that portion.`;
+  candidates.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'ex-row';
+    b.innerHTML = `
+      <span class="ex-name">${escapeHtml(f.name)}</span>
+      <span class="ex-meta">${escapeHtml(f.owner)} · ${escapeHtml(f.unit)} · ${f.kcal} kcal</span>`;
+    b.addEventListener('click', () => runFoodMerge(f));
+    list.appendChild(b);
+  });
+  openSheet('food-merge');
+}
+
+async function runFoodMerge(winner) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const loser = foodMergeLoser;
+  if (!loser || winner.id === loser.id) return;
+  if (winner.unit !== loser.unit) { // belt-and-braces re-check
+    toast('Can only merge foods with the same portion', 'err');
+    return;
+  }
+  const { count: n, error: cntErr } = await sb.from('food_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('food_id', loser.id);
+  if (cntErr) { sbError('Merge failed', cntErr); return; }
+
+  if (!(await confirmModal({
+    title: 'Merge foods?',
+    message: `Move ${n} logged entr${n === 1 ? 'y' : 'ies'} from "${loser.name}" into "${winner.name}", then delete "${loser.name}". This can't be undone.`,
+    confirmLabel: 'Merge',
+    danger: true,
+  }))) return;
+
+  // No collisions to resolve (many entries per member+day is normal), so one
+  // UPDATE repoints every loser row in a single statement.
+  const { error: upErr } = await sb.from('food_logs')
+    .update({ food_id: winner.id }).eq('food_id', loser.id);
+  if (upErr) { sbError('Merge failed', upErr); return; }
+  // food_logs.food_id is ON DELETE CASCADE: deleting the loser while any row
+  // still points at it would silently destroy that row. Re-count first; a
+  // non-zero count (or a failed count) leaves both foods intact, and
+  // re-running the merge finishes the job.
+  const { count: left, error: leftErr } = await sb.from('food_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('food_id', loser.id);
+  if (leftErr) { sbError('Merge failed', leftErr); return; }
+  if ((left ?? 0) > 0) { toast(`"${loser.name}" still has ${left} log${left === 1 ? '' : 's'} — run the merge again`, 'err'); return; }
+  const { error } = await sb.from('foods').delete().eq('id', loser.id);
+  if (error) { sbError('Merge failed', error); return; }
+  toast(`Merged "${loser.name}" into "${winner.name}"`);
+  foodMergeLoser = null;
+  closeSheet();
+  allFoods = null;
+  loadAdminFood();
+}
+
+/* ---------- delete (only when zero logs reference it) ---------- */
+// critical guard: food_logs.food_id is ON DELETE CASCADE, so a delete that
+// slips past the count check destroys log rows silently instead of erroring
+async function confirmAdminFoodDelete(food) {
+  if (!session?.is_admin) { toast('Admins only', 'err'); return; }
+  const { count, error } = await sb.from('food_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('food_id', food.id);
+  if (error) { sbError('Delete failed', error); return; }
+  if ((count ?? 0) > 0) {
+    toast(`"${food.name}" has ${count} log${count === 1 ? '' : 's'} — merge it instead`, 'err');
+    return;
+  }
+  if (!(await confirmModal({
+    title: 'Delete food?',
+    message: `Delete "${food.name}" (${food.owner})? It has no logged entries.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  }))) return;
+  const { error: delErr } = await sb.from('foods').delete().eq('id', food.id);
+  if (delErr) { sbError('Delete failed', delErr); return; }
+  toast(`Deleted "${food.name}"`);
+  allFoods = null;
+  loadAdminFood();
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 async function loadFood() {
@@ -3194,7 +3479,7 @@ async function saveFoodLog() {
 
 function switchTab(tab) {
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ['today', 'history', 'friends', 'food', 'profile', 'admin', 'admin-ex'].forEach((t) =>
+  ['today', 'history', 'friends', 'food', 'profile', 'admin', 'admin-ex', 'admin-food'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
@@ -3203,6 +3488,7 @@ function switchTab(tab) {
   if (tab === 'profile') loadProfile();
   if (tab === 'admin') loadAdmin();
   if (tab === 'admin-ex') loadAdminEx();
+  if (tab === 'admin-food') loadAdminFood();
 }
 
 function enterApp() {
@@ -3288,6 +3574,12 @@ function init() {
     renderAdminExList();
   });
   $('#ex-rename-save').addEventListener('click', saveExRename);
+  $('#admin-food-back').addEventListener('click', () => switchTab('profile'));
+  $('#admin-food-search').addEventListener('input', (e) => {
+    adminFoodSearch = e.target.value.trim();
+    renderAdminFoodList();
+  });
+  $('#food-rename-save').addEventListener('click', saveFoodRename);
 
   $$('#measure-seg button').forEach((b) => b.addEventListener('click', () => {
     createMeasure = b.dataset.mt;
