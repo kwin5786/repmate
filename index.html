@@ -1349,6 +1349,7 @@ let allExercises = null;      // cached full library for this app session
 let allFoods = null; // the session member's own foods
 let foodLogs = [];  // food_logs rows for selectedDate
 let pendingFood = null;  // the food being logged
+let editingFoodLog = null;  // existing food_logs row when editing
 let openGroups = new Set();   // which group headers are expanded
 let planSel = new Set();       // groups chosen in the Plan Today chips
 let weekGroups = new Map();    // muscle_group -> number of distinct days trained this week
@@ -1522,6 +1523,8 @@ function closeSheet() {
   discardTimer(); // a running timer (and its wake lock) never survives the sheet
   sheetStep = null;
   editingLog = null;
+  editingFoodLog = null;
+  pendingFood = null;
   currentExercise = null;
   $('#sheet').classList.remove('show');
   $('#sheet-backdrop').classList.remove('show');
@@ -3025,7 +3028,26 @@ function renderFoodList() {
           <div class="wo-name">${escapeHtml(f.name || 'Unknown food')}</div>
           <div class="wo-sets">${r.qty} × ${escapeHtml(f.unit || '')}</div>
           <div class="wo-kcal">~${kcal} kcal · ${protein}g protein</div>
-        </div>`;
+        </div>
+        <button class="wo-del" aria-label="Delete">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+        </button>`;
+
+      // tap main area -> edit; delete icon or long-press -> delete (confirm)
+      let lpTimer = null, lpFired = false;
+      card.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; confirmFoodDelete(r); }, 600);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) =>
+        card.addEventListener(ev, () => clearTimeout(lpTimer)));
+      card.querySelector('.wo-main').addEventListener('click', () => {
+        if (!lpFired) openFoodLogForEdit(r);
+      });
+      card.querySelector('.wo-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!lpFired) confirmFoodDelete(r);
+      });
       list.appendChild(card);
     });
   });
@@ -3101,6 +3123,26 @@ function openFoodEntry(food) {
   openSheet('food-entry');
 }
 
+function openFoodLogForEdit(r) {
+  editingFoodLog = r;
+  pendingFood = r.foods;
+  $('#food-time').value = (r.eaten_time || '').slice(0, 5);
+  $('#food-qty').value = String(r.qty);
+  $('#food-snack-toggle').classList.toggle('sel', r.meal === 'snack');
+  $('#food-entry-title').childNodes[0].nodeValue = (r.foods?.name || 'Food') + ' ';
+  updateFoodPreview();
+  openSheet('food-entry');
+}
+
+async function confirmFoodDelete(r) {
+  const name = r.foods?.name || 'this food';
+  if (!(await confirmModal({ title: 'Delete entry?', message: `Delete ${name} from ${r.meal}?`, confirmLabel: 'Delete', danger: true }))) return;
+  const { error } = await sb.from('food_logs').delete().eq('id', r.id);
+  if (error) { sbError('Delete failed', error); return; }
+  toast('Deleted');
+  loadFood();
+}
+
 function updateFoodPreview() {
   const qty = parseFloat($('#food-qty').value);
   const el = $('#food-entry-preview');
@@ -3118,18 +3160,26 @@ async function saveFoodLog() {
   if (!Number.isFinite(qty) || qty <= 0) { toast('Quantity must be more than 0', 'err'); return; }
   const btn = $('#save-food-log-btn');
   btn.disabled = true;
-  const { error } = await sb.from('food_logs').insert({
-    member_id: session.member_id,
-    log_date: selectedDate,
-    meal: guessMeal(),
-    eaten_time: time.slice(0, 5) + ':00',
-    food_id: pendingFood.id,
-    qty
-  });
+  const eatenTime = time.slice(0, 5) + ':00';
+  const { error } = editingFoodLog
+    ? await sb.from('food_logs').update({
+        meal: guessMeal(),
+        qty,
+        eaten_time: eatenTime
+      }).eq('id', editingFoodLog.id)
+    : await sb.from('food_logs').insert({
+        member_id: session.member_id,
+        log_date: selectedDate,
+        meal: guessMeal(),
+        eaten_time: eatenTime,
+        food_id: pendingFood.id,
+        qty
+      });
   btn.disabled = false;
   if (error) { sbError('Could not save', error); return; }
-  toast(`Logged ${pendingFood.name}`);
+  toast(`${editingFoodLog ? 'Updated' : 'Logged'} ${pendingFood.name}`);
   pendingFood = null;
+  editingFoodLog = null;
   closeSheet();
   loadFood();
 }
