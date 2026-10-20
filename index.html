@@ -236,6 +236,22 @@ input::placeholder{ color: var(--text-dim); }
   z-index: 20;
 }
 .add-btn:active{ transform: translateX(-50%) scale(.96); }
+#food-add-btn{
+  position: fixed;
+  bottom: calc(var(--nav-h) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 800;
+  font-size: 16px;
+  border-radius: 999px;
+  padding: 15px 26px;
+  box-shadow: 0 6px 24px rgba(198,245,66,.25);
+  z-index: 20;
+}
+#food-add-btn:active{ transform: translateX(-50%) scale(.96); }
 
 /* ============================================================
    HISTORY
@@ -796,6 +812,12 @@ input::placeholder{ color: var(--text-dim); }
       <div class="pf-card" id="friends-list"></div>
     </div>
 
+    <div id="view-food" class="tab-view hidden">
+      <div id="food-total" class="day-total hidden"></div>
+      <div id="food-list"></div>
+      <button class="primary-btn" id="food-add-btn">+ Log food</button>
+    </div>
+
     <!-- PROFILE -->
     <div id="view-profile" class="tab-view hidden">
       <div id="profile-banner" class="pf-banner hidden">
@@ -839,6 +861,10 @@ input::placeholder{ color: var(--text-dim); }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.7c2.6.4 4.5 2.1 4.5 4.8"/></svg>
         Friends
       </button>
+      <button class="nav-btn" data-tab="food">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v8a3 3 0 0 0 6 0V3"/><path d="M7 11v10"/><path d="M17 3c-1.5 2-2 4-2 6s.5 3 2 3 2-1 2-3-.5-4-2-6z"/><path d="M17 12v9"/></svg>
+        Food
+      </button>
     </nav>
   </div>
 
@@ -852,6 +878,24 @@ input::placeholder{ color: var(--text-dim); }
       <div class="sheet-title">Add workout <button class="sheet-close" data-close>&times;</button></div>
       <input type="search" id="ex-search" placeholder="Search exercises… e.g. Bench Press" autocomplete="off">
       <div id="ex-results"></div>
+    </div>
+
+    <!-- food: pick a food -->
+    <div id="sheet-food-search" class="hidden">
+      <div class="sheet-title">Log food <button class="sheet-close" data-close>&times;</button></div>
+      <input type="text" id="food-search" autocomplete="off" placeholder="Search your foods">
+      <div id="food-results"></div>
+    </div>
+
+    <!-- food: log an entry -->
+    <div id="sheet-food-entry" class="hidden">
+      <div class="sheet-title" id="food-entry-title">Log food <button class="sheet-close" data-close>&times;</button></div>
+      <div class="form-label">Meal</div>
+      <div class="chips" id="meal-chips"></div>
+      <div class="form-label">Quantity</div>
+      <input type="number" id="food-qty" inputmode="decimal" min="0.1" max="50" step="0.5" value="1">
+      <div class="day-total" id="food-entry-preview"></div>
+      <button class="primary-btn" id="save-food-log-btn">Save</button>
     </div>
 
     <!-- step 2: create exercise -->
@@ -1301,6 +1345,10 @@ let editingLog = null;     // existing workout_logs row when editing
 let createMeasure = 'weight';
 let createMuscle = null;
 let allExercises = null;      // cached full library for this app session
+let allFoods = null; // the session member's own foods
+let foodLogs = [];  // food_logs rows for selectedDate
+let pendingFood = null;  // the food being logged
+let pendingMeal = null;  // the chosen meal chip
 let openGroups = new Set();   // which group headers are expanded
 let planSel = new Set();       // groups chosen in the Plan Today chips
 let weekGroups = new Map();    // muscle_group -> number of distinct days trained this week
@@ -1457,7 +1505,7 @@ async function confirmDelete(log) {
 /* ---------- sheet plumbing ---------- */
 function openSheet(step) {
   sheetStep = step;
-  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge', 'food-new'].forEach((s) =>
+  ['search', 'create', 'entry', 'chart', 'onboard', 'admin-add', 'admin-pin', 'ex-rename', 'ex-merge', 'food-new', 'food-search', 'food-entry'].forEach((s) =>
     $(`#sheet-${s}`).classList.toggle('hidden', s !== step));
   $('#sheet-backdrop').classList.remove('hidden');
   requestAnimationFrame(() => {
@@ -2936,13 +2984,176 @@ async function confirmExDelete(ex) {
 /* ============================================================
    NAV
    ============================================================ */
+async function loadFood() {
+  const { data, error } = await sb.from('food_logs')
+    .select('id, meal, qty, created_at, foods(id, name, unit, kcal, protein_g)')
+    .eq('member_id', session.member_id)
+    .eq('log_date', selectedDate)
+    .order('created_at');
+  if (error) { sbError('Could not load food', error); return; }
+  foodLogs = data || [];
+  renderFoodList();
+}
+
+function renderFoodList() {
+  const list = $('#food-list');
+  const totalEl = $('#food-total');
+  if (foodLogs.length === 0) {
+    totalEl.classList.add('hidden');
+    const isToday = selectedDate === localISO();
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="big">🍽️</div>
+        Nothing logged ${isToday ? 'today yet' : 'for this day'}.<br>
+        Tap <b>+ Log food</b> to add your first meal.
+      </div>`;
+    return;
+  }
+  list.innerHTML = '';
+  let totalKcal = 0, totalProtein = 0;
+  MEALS.forEach((meal) => {
+    const rows = foodLogs.filter((r) => r.meal === meal);
+    if (rows.length === 0) return;
+    const head = document.createElement('div');
+    head.className = 'form-label';
+    head.textContent = meal.charAt(0).toUpperCase() + meal.slice(1);
+    list.appendChild(head);
+    rows.forEach((r) => {
+      const f = r.foods || {};
+      const kcal = Math.round((f.kcal || 0) * r.qty);
+      const protein = Math.round((f.protein_g || 0) * r.qty * 10) / 10;
+      totalKcal += kcal;
+      totalProtein += protein;
+      const card = document.createElement('div');
+      card.className = 'wo-card';
+      card.innerHTML = `
+        <div class="wo-main">
+          <div class="wo-name">${escapeHtml(f.name || 'Unknown food')}</div>
+          <div class="wo-sets">${r.qty} × ${escapeHtml(f.unit || '')}</div>
+          <div class="wo-kcal">~${kcal} kcal · ${protein}g protein</div>
+        </div>`;
+      list.appendChild(card);
+    });
+  });
+  totalEl.textContent = `Eaten: ~${Math.round(totalKcal)} kcal · ${Math.round(totalProtein * 10) / 10}g protein`;
+  totalEl.classList.toggle('hidden', totalKcal <= 0);
+}
+
+async function openFoodSearch() {
+  $('#food-search').value = '';
+  $('#food-results').innerHTML = '';
+  openSheet('food-search');
+  if (allFoods === null) {
+    const { data, error } = await sb.from('foods')
+      .select('id, name, unit, kcal, protein_g')
+      .eq('member_id', session.member_id)
+      .order('name');
+    if (error) { sbError('Could not load your foods', error); return; }
+    allFoods = data || [];
+  }
+  renderFoodPicker('');
+}
+
+function renderFoodPicker(term) {
+  if (allFoods === null) return;
+  const box = $('#food-results');
+  const q = term.toLowerCase();
+  const rows = q ? allFoods.filter((f) => f.name.toLowerCase().includes(q)) : allFoods;
+  box.innerHTML = '';
+  rows.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'ex-row';
+    b.innerHTML = `
+      <span class="ex-main">
+        <span class="ex-name">${escapeHtml(f.name)}</span>
+        <span class="ex-meta">${escapeHtml(f.unit)} · ${f.kcal} kcal · ${f.protein_g}g protein</span>
+      </span>`;
+    b.addEventListener('click', () => openFoodEntry(f));
+    box.appendChild(b);
+  });
+  if (q) {
+    const exact = allFoods.some((f) => f.name.toLowerCase() === q);
+    if (!exact) {
+      const b = document.createElement('button');
+      b.className = 'ex-row create-row';
+      b.innerHTML = `<span class="ex-name">+ Add "${escapeHtml(term)}"</span>`;
+      b.addEventListener('click', () => openFoodNew());
+      box.appendChild(b);
+    }
+  }
+}
+
+const MEALS = ['breakfast', 'lunch', 'snack', 'dinner'];
+
+function guessMeal() {
+  const h = new Date().getHours();
+  if (h < 11) return 'breakfast';
+  if (h < 16) return 'lunch';
+  return 'dinner';
+}
+
+function renderMealChips() {
+  const box = $('#meal-chips');
+  box.innerHTML = '';
+  MEALS.forEach((m) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (m === pendingMeal ? ' sel' : '');
+    b.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+    b.addEventListener('click', () => { pendingMeal = m; renderMealChips(); });
+    box.appendChild(b);
+  });
+}
+
+function openFoodEntry(food) {
+  pendingFood = food;
+  pendingMeal = guessMeal();
+  $('#food-qty').value = '1';
+  $('#food-entry-title').childNodes[0].nodeValue = food.name + ' ';
+  renderMealChips();
+  updateFoodPreview();
+  openSheet('food-entry');
+}
+
+function updateFoodPreview() {
+  const qty = parseFloat($('#food-qty').value);
+  const el = $('#food-entry-preview');
+  if (!pendingFood || !Number.isFinite(qty) || qty <= 0) { el.textContent = ''; return; }
+  const kcal = Math.round(pendingFood.kcal * qty);
+  const protein = Math.round(pendingFood.protein_g * qty * 10) / 10;
+  el.textContent = `${qty} × ${pendingFood.unit} — ~${kcal} kcal · ${protein}g protein`;
+}
+
+async function saveFoodLog() {
+  const qty = parseFloat($('#food-qty').value);
+  if (!pendingFood) { toast('Pick a food first', 'err'); return; }
+  if (!MEALS.includes(pendingMeal)) { toast('Choose a meal', 'err'); return; }
+  if (!Number.isFinite(qty) || qty <= 0) { toast('Quantity must be more than 0', 'err'); return; }
+  const btn = $('#save-food-log-btn');
+  btn.disabled = true;
+  const { error } = await sb.from('food_logs').insert({
+    member_id: session.member_id,
+    log_date: selectedDate,
+    meal: pendingMeal,
+    food_id: pendingFood.id,
+    qty
+  });
+  btn.disabled = false;
+  if (error) { sbError('Could not save', error); return; }
+  toast(`Logged ${pendingFood.name}`);
+  pendingFood = null;
+  pendingMeal = null;
+  closeSheet();
+  loadFood();
+}
+
 function switchTab(tab) {
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  ['today', 'history', 'friends', 'profile', 'admin', 'admin-ex'].forEach((t) =>
+  ['today', 'history', 'friends', 'food', 'profile', 'admin', 'admin-ex'].forEach((t) =>
     $(`#view-${t}`).classList.toggle('hidden', t !== tab));
   $('#add-btn').classList.toggle('hidden', tab !== 'today');
   if (tab === 'history') loadHistory();
   if (tab === 'friends') loadFriends();
+  if (tab === 'food') loadFood();
   if (tab === 'profile') loadProfile();
   if (tab === 'admin') loadAdmin();
   if (tab === 'admin-ex') loadAdminEx();
@@ -3005,6 +3216,10 @@ function init() {
   $('#ex-search').addEventListener('input', onSearchInput);
   $('#create-ex-btn').addEventListener('click', createExercise);
   $('#create-food-btn').addEventListener('click', createFood);
+  $('#food-add-btn').addEventListener('click', openFoodSearch);
+  $('#food-search').addEventListener('input', () => renderFoodPicker($('#food-search').value.trim()));
+  $('#save-food-log-btn').addEventListener('click', saveFoodLog);
+  $('#food-qty').addEventListener('input', updateFoodPreview);
   $('#addset-btn').addEventListener('click', () => addSetRow(currentExercise.measure_type, {}));
   $('#save-btn').addEventListener('click', saveEntry);
 
